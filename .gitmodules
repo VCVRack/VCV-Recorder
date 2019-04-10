@@ -1,0 +1,3 @@
+[submodule "dep/x264"]
+	path = dep/x264
+	url = https://git.videolan.org/git/x264.git
