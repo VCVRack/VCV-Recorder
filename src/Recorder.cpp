@@ -1,21 +1,89 @@
 #include "plugin.hpp"
+
+extern "C" {
 #include <libavcodec/avcodec.h>
+}
 
 
 static const int MAX_BUFFER_LEN = 1024;
 
 
 struct Encoder {
-	Encoder() {
+	AVCodec *codec;
+	AVCodecContext *c;
+	FILE *f;
+	AVPacket *pkt;
+	AVFrame *frame;
+	int frameIndex = 0;
 
+	Encoder() {
+		int err;
+		codec = avcodec_find_encoder(AV_CODEC_ID_MP3);
+		assert(codec);
+		c = avcodec_alloc_context3(codec);
+		assert(c);
+
+		c->bit_rate = 64000;
+		c->sample_fmt = AV_SAMPLE_FMT_S16;
+		c->sample_rate = 44100;
+		c->channel_layout = AV_CH_LAYOUT_MONO;
+		c->channels = av_get_channel_layout_nb_channels(c->channel_layout);
+
+		err = avcodec_open2(c, codec, NULL);
+		assert(err == 0);
+
+		f = fopen("out.mp3", "wb");
+		assert(f);
+
+		pkt = av_packet_alloc();
+		assert(pkt);
+
+		frame = av_frame_alloc();
+		assert(frame);
+		frame->nb_samples = c->frame_size;
+		frame->format = c->sample_fmt;
+		frame->channel_layout = c->channel_layout;
+
+		err = av_frame_get_buffer(frame, 0);
+		assert(err == 0);
 	}
 
 	~Encoder() {
-
+		fclose(f);
+		av_frame_free(&frame);
+		av_packet_free(&pkt);
+		avcodec_free_context(&c);
 	}
 
-	void processBuffer(float *input) {
+	void process(float *input) {
+		int err;
+		err = av_frame_make_writable(frame);
+		assert(err == 0);
 
+		// Set output
+		uint16_t *output = (uint16_t*) frame->data[0];
+		output[frameIndex] = (uint16_t) std::round(clamp(input[0], -1.f, 1.f) * 32767);
+
+		frameIndex++;
+		if (frameIndex >= c->frame_size) {
+			frameIndex = 0;
+			flushFrame();
+		}
+	}
+
+	void flushFrame() {
+		int err;
+		err = avcodec_send_frame(c, frame);
+		assert(err == 0);
+
+		while (err >= 0) {
+			err = avcodec_receive_packet(c, pkt);
+			if (err == AVERROR(EAGAIN) || err == AVERROR_EOF)
+				break;
+
+			fwrite(pkt->data, 1, pkt->size, f);
+			av_packet_unref(pkt);
+		}
 	}
 };
 
@@ -37,7 +105,7 @@ struct Recorder : Module {
 		NUM_OUTPUTS
 	};
 	enum LightIds {
-		ENUMS(VU_LIGHTS, 2*6),
+		ENUMS(VU_LIGHTS, 2 * 6),
 		REC_LIGHT,
 		NUM_LIGHTS
 	};
@@ -47,8 +115,6 @@ struct Recorder : Module {
 	dsp::VuMeter2 vuMeter[2];
 	bool gate = false;
 	Encoder *encoder;
-	float inputBuffer[MAX_BUFFER_LEN] = {};
-	dsp::Counter inputCounter;
 
 	Recorder() {
 		config(NUM_PARAMS, NUM_INPUTS, NUM_OUTPUTS, NUM_LIGHTS);
@@ -56,7 +122,6 @@ struct Recorder : Module {
 		configParam(REC_PARAM, 0.f, 1.f, 0.f, "Record");
 
 		encoder = new Encoder;
-		inputCounter.setPeriod(MAX_BUFFER_LEN);
 	}
 
 	~Recorder() {
@@ -80,22 +145,19 @@ struct Recorder : Module {
 		float in[2];
 		in[0] = inputs[LEFT_INPUT].getVoltage() / 10.f * gain;
 		in[1] = inputs[RIGHT_INPUT].getVoltage() / 10.f * gain;
-		inputBuffer[inputCounter.getCount()] = in[0];
 
 		// Process
-		if (inputCounter.process()) {
-			encoder->processBuffer(inputBuffer);
-		}
+		encoder->process(in);
 
 		// Lights
 		for (int i = 0; i < 2; i++) {
 			vuMeter[i].process(args.sampleTime, in[i]);
-			lights[VU_LIGHTS + i*6 + 0].setBrightness(vuMeter[i].getBrightness(0, 0));
-			lights[VU_LIGHTS + i*6 + 1].setBrightness(vuMeter[i].getBrightness(-3, 0));
-			lights[VU_LIGHTS + i*6 + 2].setBrightness(vuMeter[i].getBrightness(-6, -3));
-			lights[VU_LIGHTS + i*6 + 3].setBrightness(vuMeter[i].getBrightness(-12, -6));
-			lights[VU_LIGHTS + i*6 + 4].setBrightness(vuMeter[i].getBrightness(-24, -12));
-			lights[VU_LIGHTS + i*6 + 5].setBrightness(vuMeter[i].getBrightness(-36, -24));
+			lights[VU_LIGHTS + i * 6 + 0].setBrightness(vuMeter[i].getBrightness(0, 0));
+			lights[VU_LIGHTS + i * 6 + 1].setBrightness(vuMeter[i].getBrightness(-3, 0));
+			lights[VU_LIGHTS + i * 6 + 2].setBrightness(vuMeter[i].getBrightness(-6, -3));
+			lights[VU_LIGHTS + i * 6 + 3].setBrightness(vuMeter[i].getBrightness(-12, -6));
+			lights[VU_LIGHTS + i * 6 + 4].setBrightness(vuMeter[i].getBrightness(-24, -12));
+			lights[VU_LIGHTS + i * 6 + 5].setBrightness(vuMeter[i].getBrightness(-36, -24));
 		}
 
 		lights[REC_LIGHT].setBrightness(gate);
@@ -144,18 +206,18 @@ struct RecorderWidget : ModuleWidget {
 		addInput(createInputCentered<PJ301MPort>(mm2px(Vec(6.696, 112.253)), module, Recorder::LEFT_INPUT));
 		addInput(createInputCentered<PJ301MPort>(mm2px(Vec(18.703, 112.253)), module, Recorder::RIGHT_INPUT));
 
-		addChild(createLightCentered<MediumLight<RedLight>>(mm2px(Vec(6.7, 34.758)), module, Recorder::VU_LIGHTS + 0*6 + 0));
-		addChild(createLightCentered<MediumLight<RedLight>>(mm2px(Vec(18.7, 34.758)), module, Recorder::VU_LIGHTS + 1*6 + 0));
-		addChild(createLightCentered<MediumLight<YellowLight>>(mm2px(Vec(6.7, 39.884)), module, Recorder::VU_LIGHTS + 0*6 + 1));
-		addChild(createLightCentered<MediumLight<YellowLight>>(mm2px(Vec(18.7, 39.884)), module, Recorder::VU_LIGHTS + 1*6 + 1));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(6.7, 45.009)), module, Recorder::VU_LIGHTS + 0*6 + 2));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(18.7, 45.009)), module, Recorder::VU_LIGHTS + 1*6 + 2));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(6.7, 50.134)), module, Recorder::VU_LIGHTS + 0*6 + 3));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(18.7, 50.134)), module, Recorder::VU_LIGHTS + 1*6 + 3));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(6.7, 55.259)), module, Recorder::VU_LIGHTS + 0*6 + 4));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(18.7, 55.259)), module, Recorder::VU_LIGHTS + 1*6 + 4));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(6.7, 60.384)), module, Recorder::VU_LIGHTS + 0*6 + 5));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(18.7, 60.384)), module, Recorder::VU_LIGHTS + 1*6 + 5));
+		addChild(createLightCentered<MediumLight<RedLight>>(mm2px(Vec(6.7, 34.758)), module, Recorder::VU_LIGHTS + 0 * 6 + 0));
+		addChild(createLightCentered<MediumLight<RedLight>>(mm2px(Vec(18.7, 34.758)), module, Recorder::VU_LIGHTS + 1 * 6 + 0));
+		addChild(createLightCentered<MediumLight<YellowLight>>(mm2px(Vec(6.7, 39.884)), module, Recorder::VU_LIGHTS + 0 * 6 + 1));
+		addChild(createLightCentered<MediumLight<YellowLight>>(mm2px(Vec(18.7, 39.884)), module, Recorder::VU_LIGHTS + 1 * 6 + 1));
+		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(6.7, 45.009)), module, Recorder::VU_LIGHTS + 0 * 6 + 2));
+		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(18.7, 45.009)), module, Recorder::VU_LIGHTS + 1 * 6 + 2));
+		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(6.7, 50.134)), module, Recorder::VU_LIGHTS + 0 * 6 + 3));
+		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(18.7, 50.134)), module, Recorder::VU_LIGHTS + 1 * 6 + 3));
+		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(6.7, 55.259)), module, Recorder::VU_LIGHTS + 0 * 6 + 4));
+		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(18.7, 55.259)), module, Recorder::VU_LIGHTS + 1 * 6 + 4));
+		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(6.7, 60.384)), module, Recorder::VU_LIGHTS + 0 * 6 + 5));
+		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(18.7, 60.384)), module, Recorder::VU_LIGHTS + 1 * 6 + 5));
 		addChild(createLightCentered<RecLight>(mm2px(Vec(12.699, 73.624)), module, Recorder::REC_LIGHT));
 	}
 };
