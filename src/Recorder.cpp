@@ -1,4 +1,23 @@
 #include "plugin.hpp"
+#include <libavcodec/avcodec.h>
+
+
+static const int MAX_BUFFER_LEN = 1024;
+
+
+struct Encoder {
+	Encoder() {
+
+	}
+
+	~Encoder() {
+
+	}
+
+	void processBuffer(float *input) {
+
+	}
+};
 
 
 struct Recorder : Module {
@@ -27,19 +46,25 @@ struct Recorder : Module {
 	dsp::SchmittTrigger trigTrigger;
 	dsp::VuMeter2 vuMeter[2];
 	bool gate = false;
+	Encoder *encoder;
+	float inputBuffer[MAX_BUFFER_LEN] = {};
+	dsp::Counter inputCounter;
 
 	Recorder() {
 		config(NUM_PARAMS, NUM_INPUTS, NUM_OUTPUTS, NUM_LIGHTS);
 		configParam(GAIN_PARAM, 0.f, 2.f, 1.f, "Gain", " dB", -10, 20);
 		configParam(REC_PARAM, 0.f, 1.f, 0.f, "Record");
+
+		encoder = new Encoder;
+		inputCounter.setPeriod(MAX_BUFFER_LEN);
+	}
+
+	~Recorder() {
+		delete encoder;
 	}
 
 	void process(const ProcessArgs &args) override {
-		float gain = params[GAIN_PARAM].getValue();
-		float out[2];
-		out[0] = inputs[LEFT_INPUT].getVoltage() / 10.f * gain;
-		out[1] = inputs[RIGHT_INPUT].getVoltage() / 10.f * gain;
-
+		// Record state
 		if (recTrigger.process(params[REC_PARAM].getValue())) {
 			gate ^= true;
 		}
@@ -50,8 +75,21 @@ struct Recorder : Module {
 			gate = (inputs[GATE_INPUT].getVoltage() >= 2.f);
 		}
 
+		// Input
+		float gain = params[GAIN_PARAM].getValue();
+		float in[2];
+		in[0] = inputs[LEFT_INPUT].getVoltage() / 10.f * gain;
+		in[1] = inputs[RIGHT_INPUT].getVoltage() / 10.f * gain;
+		inputBuffer[inputCounter.getCount()] = in[0];
+
+		// Process
+		if (inputCounter.process()) {
+			encoder->processBuffer(inputBuffer);
+		}
+
+		// Lights
 		for (int i = 0; i < 2; i++) {
-			vuMeter[i].process(args.sampleTime, out[i]);
+			vuMeter[i].process(args.sampleTime, in[i]);
 			lights[VU_LIGHTS + i*6 + 0].setBrightness(vuMeter[i].getBrightness(0, 0));
 			lights[VU_LIGHTS + i*6 + 1].setBrightness(vuMeter[i].getBrightness(-3, 0));
 			lights[VU_LIGHTS + i*6 + 2].setBrightness(vuMeter[i].getBrightness(-6, -3));
