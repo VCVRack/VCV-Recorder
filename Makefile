@@ -3,6 +3,8 @@ RACK_DIR ?= ../..
 FLAGS +=
 CFLAGS +=
 CXXFLAGS +=
+# No idea what this does. Recommended by https://ffmpeg.org/platform.html#Advanced-linking-configuration
+LDFLAGS += -Wl,-Bsymbolic
 
 SOURCES += $(wildcard src/*.cpp)
 
@@ -10,28 +12,33 @@ DISTRIBUTABLES += res
 DISTRIBUTABLES += $(wildcard LICENSE*)
 
 
-x264 := dep/lib/libx264.a
 ffmpeg := dep/lib/libavcodec.a
+lame := dep/lib/libmp3lame.a
 
-OBJECTS += $(x264)
-OBJECTS += dep/lib/libavutil.a
-OBJECTS += dep/lib/libavcodec.a
+# Order matters here
 OBJECTS += dep/lib/libavformat.a
+OBJECTS += dep/lib/libavcodec.a
+OBJECTS += dep/lib/libavutil.a
+OBJECTS += $(lame)
 
 DEP_LOCAL := dep
 DEPS += $(ffmpeg)
 
-$(x264):
-	cd dep/x264 && $(CONFIGURE) --disable-cli --enable-static --enable-pic
-	cd dep/x264 && $(MAKE)
-	cd dep/x264 && $(MAKE) install
-
-$(ffmpeg): $(x264)
-	cd dep/ffmpeg && $(CONFIGURE) --enable-pic --enable-shared --extra-cflags="-fPIC" \
-		--enable-gpl --disable-programs --disable-doc --disable-avdevice --disable-swresample --disable-swscale --disable-postproc --disable-avfilter --disable-network --disable-autodetect --disable-everything \
-		--enable-libx264 --enable-encoder=libx264rgb --enable-encoder=aac
+$(ffmpeg): $(lame)
+	cd dep/ffmpeg && $(CONFIGURE) --enable-pic --enable-gpl \
+		--disable-programs --disable-doc --disable-avdevice --disable-swresample --disable-swscale --disable-postproc --disable-avfilter --disable-network --disable-iconv --disable-alsa --disable-autodetect --disable-everything \
+		--enable-protocol=file \
+		--enable-muxer=wav --enable-encoder=pcm_s16le \
+		--enable-libmp3lame --enable-muxer=mp3 --enable-encoder=libmp3lame \
+		--enable-muxer=flac --enable-encoder=flac
 	cd dep/ffmpeg && $(MAKE)
 	cd dep/ffmpeg && $(MAKE) install
+
+$(lame):
+	cd dep && $(WGET) "https://sourceforge.net/projects/lame/files/lame/3.100/lame-3.100.tar.gz"
+	cd dep && $(UNTAR) "lame-3.100.tar.gz"
+	cd dep/lame-3.100 && $(CONFIGURE)
+	cd dep/lame-3.100 && $(MAKE) install
 
 
 include $(RACK_DIR)/plugin.mk

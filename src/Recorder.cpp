@@ -2,87 +2,250 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
 }
 
 
 static const int MAX_BUFFER_LEN = 1024;
 
 
+inline int16_t floatToS16(float x) {
+	return (int16_t) std::round(clamp(x, -1.f, 1.f) * 0x7fff);
+}
+
+
 struct Encoder {
-	AVCodec *codec;
-	AVCodecContext *c;
-	FILE *f;
-	AVPacket *pkt;
-	AVFrame *frame;
+	AVIOContext *io = NULL;
+	AVFormatContext *formatCtx = NULL;
+	AVCodec *audioCodec = NULL;
+	AVCodecContext *audioCtx = NULL;
+	AVStream *audioStream = NULL;
+	AVFrame *audioFrame = NULL;
 	int frameIndex = 0;
 
-	Encoder() {
-		int err;
-		codec = avcodec_find_encoder(AV_CODEC_ID_MP3);
-		assert(codec);
-		c = avcodec_alloc_context3(codec);
-		assert(c);
-
-		c->bit_rate = 64000;
-		c->sample_fmt = AV_SAMPLE_FMT_S16;
-		c->sample_rate = 44100;
-		c->channel_layout = AV_CH_LAYOUT_MONO;
-		c->channels = av_get_channel_layout_nb_channels(c->channel_layout);
-
-		err = avcodec_open2(c, codec, NULL);
-		assert(err == 0);
-
-		f = fopen("out.mp3", "wb");
-		assert(f);
-
-		pkt = av_packet_alloc();
-		assert(pkt);
-
-		frame = av_frame_alloc();
-		assert(frame);
-		frame->nb_samples = c->frame_size;
-		frame->format = c->sample_fmt;
-		frame->channel_layout = c->channel_layout;
-
-		err = av_frame_get_buffer(frame, 0);
-		assert(err == 0);
-	}
-
 	~Encoder() {
-		fclose(f);
-		av_frame_free(&frame);
-		av_packet_free(&pkt);
-		avcodec_free_context(&c);
+		close();
 	}
 
-	void process(float *input) {
+	void initFormat(const std::string &formatName) {
 		int err;
-		err = av_frame_make_writable(frame);
-		assert(err == 0);
+		assert(!formatCtx);
+		err = avformat_alloc_output_context2(&formatCtx, NULL, formatName.c_str(), NULL);
+		assert(err >= 0);
+		assert(formatCtx);
+	}
 
-		// Set output
-		uint16_t *output = (uint16_t*) frame->data[0];
-		output[frameIndex] = (uint16_t) std::round(clamp(input[0], -1.f, 1.f) * 32767);
+	void initAudio(enum AVCodecID id) {
+		assert(!audioCodec);
+		audioCodec = avcodec_find_encoder(id);
+		assert(audioCodec);
 
-		frameIndex++;
-		if (frameIndex >= c->frame_size) {
-			frameIndex = 0;
-			flushFrame();
+		assert(!audioStream);
+		audioStream = avformat_new_stream(formatCtx, audioCodec);
+		assert(audioStream);
+
+		assert(!audioCtx);
+		audioCtx = avcodec_alloc_context3(audioCodec);
+		assert(audioCtx);
+
+		assert(!audioFrame);
+		audioFrame = av_frame_alloc();
+		assert(audioFrame);
+
+		// TODO allocate resampler
+		// swr_alloc();
+		// swr_init();
+	}
+
+	bool initIO(const std::string &path) {
+		int err;
+		assert(!io);
+		std::string url = "file:" + path;
+		err = avio_open(&io, url.c_str(), AVIO_FLAG_WRITE);
+		if (err < 0)
+			return false;
+		assert(io);
+		formatCtx->pb = io;
+		return true;
+	}
+
+	void open() {
+		int err;
+		assert(formatCtx && audioCodec && audioCtx && audioStream && audioFrame);
+
+		err = avcodec_open2(audioCtx, audioCodec, NULL);
+		assert(err >= 0);
+
+		// Set up frame
+		audioFrame->format = audioCtx->sample_fmt;
+		audioFrame->channel_layout = audioCtx->channel_layout;
+		audioFrame->sample_rate = audioCtx->sample_rate;
+		audioFrame->nb_samples = audioCtx->frame_size;
+
+		err = av_frame_get_buffer(audioFrame, 0);
+		assert(err >= 0);
+
+    err = avcodec_parameters_from_context(audioStream->codecpar, audioCtx);
+    assert(err >= 0);
+
+		// av_dump_format(formatCtx, 0, NULL, true);
+
+		err = avformat_write_header(formatCtx, NULL);
+		assert(err >= 0);
+	}
+
+	void close() {
+		// Flush a NULL frame to end the stream.
+		if (audioFrame)
+			av_frame_free(&audioFrame);
+		if (formatCtx && audioCtx)
+			flushAudio();
+		// Write trailer of file
+		if (formatCtx)
+			av_write_trailer(formatCtx);
+		// Clean up objects
+		if (audioCtx)
+			avcodec_free_context(&audioCtx);
+		if (io) {
+			avio_close(io);
+			io = NULL;
+		}
+		if (formatCtx) {
+			avformat_free_context(formatCtx);
+			formatCtx = NULL;
 		}
 	}
 
-	void flushFrame() {
-		int err;
-		err = avcodec_send_frame(c, frame);
-		assert(err == 0);
+	void openWAV(const std::string &path, int channels, int sampleRate, int depth) {
+		initFormat("wav");
+		initAudio(AV_CODEC_ID_PCM_S16LE);
 
-		while (err >= 0) {
-			err = avcodec_receive_packet(c, pkt);
+		audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+		audioCtx->sample_rate = sampleRate;
+		assert(depth == 16);
+		audioCtx->channels = channels;
+		if (channels == 1) {
+			audioCtx->channel_layout = AV_CH_LAYOUT_MONO;
+		}
+		else if (channels == 2) {
+			audioCtx->channel_layout = AV_CH_LAYOUT_STEREO;
+		}
+		else {
+			assert(0);
+		}
+
+		if (!initIO(path)) {
+			close();
+			return;
+		}
+		open();
+	}
+
+	void openMP3(const std::string &path, int channels, int sampleRate, int bitRate) {
+		initFormat("mp3");
+		initAudio(AV_CODEC_ID_MP3);
+
+		audioCtx->bit_rate = bitRate;
+		audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+		audioCtx->sample_rate = sampleRate;
+		audioCtx->channels = channels;
+		if (channels == 1) {
+			audioCtx->channel_layout = AV_CH_LAYOUT_MONO;
+		}
+		else if (channels == 2) {
+			audioCtx->channel_layout = AV_CH_LAYOUT_STEREO;
+		}
+		else {
+			assert(0);
+		}
+		// audioStream->time_base = (AVRational) {1, audioCtx->sample_rate};
+
+		if (!initIO(path)) {
+			close();
+			return;
+		}
+		open();
+	}
+
+	void openFLAC(const std::string &path, int channels, int sampleRate, int depth) {
+		initFormat("flac");
+		initAudio(AV_CODEC_ID_FLAC);
+
+		if (depth == 16) {
+			audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+		}
+		else {
+			assert(0);
+		}
+		audioCtx->sample_rate = sampleRate;
+		audioCtx->channels = channels;
+		if (channels == 1) {
+			audioCtx->channel_layout = AV_CH_LAYOUT_MONO;
+		}
+		else if (channels == 2) {
+			audioCtx->channel_layout = AV_CH_LAYOUT_STEREO;
+		}
+		else {
+			assert(0);
+		}
+
+		if (!initIO(path)) {
+			close();
+			return;
+		}
+		open();
+	}
+
+	void writeAudio(float *input) {
+		int err;
+		if (!audioCtx)
+			return;
+
+		err = av_frame_make_writable(audioFrame);
+		assert(err >= 0);
+
+		// Set output
+		if (audioCtx->sample_fmt == AV_SAMPLE_FMT_FLTP) {
+			float **output = (float**) audioFrame->data;
+			for (int i = 0; i < audioCtx->channels; i++) {
+				output[i][frameIndex] = input[i];
+			}
+		}
+		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S16) {
+			int16_t **output = (int16_t**) audioFrame->data;
+			for (int i = 0; i < audioCtx->channels; i++) {
+				output[0][frameIndex * audioCtx->channels + i] = floatToS16(input[i]);
+			}
+		}
+		else {
+			assert(0);
+		}
+
+		frameIndex++;
+		if (frameIndex >= audioCtx->frame_size) {
+			frameIndex = 0;
+			flushAudio();
+		}
+	}
+
+	void flushAudio() {
+		int err;
+		assert(formatCtx && audioCtx);
+
+		// frame may be NULL to signal the end of the stream.
+		err = avcodec_send_frame(audioCtx, audioFrame);
+		assert(err >= 0);
+
+		while (1) {
+			AVPacket pkt;
+			av_init_packet(&pkt);
+
+			err = avcodec_receive_packet(audioCtx, &pkt);
 			if (err == AVERROR(EAGAIN) || err == AVERROR_EOF)
 				break;
 
-			fwrite(pkt->data, 1, pkt->size, f);
-			av_packet_unref(pkt);
+			err = av_interleaved_write_frame(formatCtx, &pkt);
+			assert(err >= 0);
 		}
 	}
 };
@@ -116,16 +279,35 @@ struct Recorder : Module {
 	bool gate = false;
 	Encoder *encoder;
 
+	// Format settings
+	std::string format;
+	std::string path;
+	int channels;
+	int sampleRate;
+	int depth;
+	int bitRate;
+
 	Recorder() {
 		config(NUM_PARAMS, NUM_INPUTS, NUM_OUTPUTS, NUM_LIGHTS);
 		configParam(GAIN_PARAM, 0.f, 2.f, 1.f, "Gain", " dB", -10, 20);
 		configParam(REC_PARAM, 0.f, 1.f, 0.f, "Record");
 
 		encoder = new Encoder;
+		onReset();
+		start();
 	}
 
 	~Recorder() {
 		delete encoder;
+	}
+
+	void onReset() override {
+		format = "FLAC";
+		path = "out.wav";
+		channels = 2;
+		sampleRate = 44100;
+		depth = 16;
+		bitRate = 256000;
 	}
 
 	void process(const ProcessArgs &args) override {
@@ -147,7 +329,7 @@ struct Recorder : Module {
 		in[1] = inputs[RIGHT_INPUT].getVoltage() / 10.f * gain;
 
 		// Process
-		encoder->process(in);
+		encoder->writeAudio(in);
 
 		// Lights
 		for (int i = 0; i < 2; i++) {
@@ -161,6 +343,45 @@ struct Recorder : Module {
 		}
 
 		lights[REC_LIGHT].setBrightness(gate);
+	}
+
+	void start() {
+		encoder->close();
+		if (format == "WAV")
+			encoder->openWAV(path, channels, sampleRate, depth);
+		else if (format == "FLAC")
+			encoder->openFLAC(path, channels, sampleRate, depth);
+		else if (format == "MP3")
+			encoder->openMP3(path, channels, sampleRate, bitRate);
+	}
+
+	void stop() {
+		encoder->close();
+	}
+
+	void setFormat(std::string format) {
+		stop();
+		this->format = format;
+	}
+
+	void setPath(std::string path) {
+		stop();
+		this->path = path;
+	}
+
+	void setSampleRate(int sampleRate) {
+		stop();
+		this->sampleRate = sampleRate;
+	}
+
+	void setDepth(int depth) {
+		stop();
+		this->depth = depth;
+	}
+
+	void setBitRate(int bitRate) {
+		stop();
+		this->bitRate = bitRate;
 	}
 };
 
@@ -184,6 +405,33 @@ struct RecLight : RedLight {
 	RecLight() {
 		bgColor = color::BLACK_TRANSPARENT;
 		box.size = mm2px(Vec(12.700, 12.700));
+	}
+};
+
+
+struct BitRateValueItem : MenuItem {
+	Recorder *module;
+	int bitRate;
+	void onAction(const widget::ActionEvent &e) override {
+		module->setBitRate(bitRate);
+	}
+};
+
+
+struct BitRateItem : MenuItem {
+	Recorder *module;
+	Menu *createChildMenu() override {
+		Menu *menu = new Menu;
+		const std::vector<int> bitRates = {128000, 160000, 192000, 224000, 256000, 320000};
+		for (int bitRate : bitRates) {
+			BitRateValueItem *item = new BitRateValueItem;
+			item->text = string::f("%d kbps", bitRate / 1000);
+			item->rightText = CHECKMARK(module->bitRate == bitRate);
+			item->module = module;
+			item->bitRate = bitRate;
+			menu->addChild(item);
+		}
+		return menu;
 	}
 };
 
@@ -219,6 +467,18 @@ struct RecorderWidget : ModuleWidget {
 		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(6.7, 60.384)), module, Recorder::VU_LIGHTS + 0 * 6 + 5));
 		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(18.7, 60.384)), module, Recorder::VU_LIGHTS + 1 * 6 + 5));
 		addChild(createLightCentered<RecLight>(mm2px(Vec(12.699, 73.624)), module, Recorder::REC_LIGHT));
+	}
+
+	void appendContextMenu(Menu *menu) override {
+		Recorder *module = dynamic_cast<Recorder*>(this->module);
+
+		menu->addChild(new MenuEntry);
+
+		BitRateItem *bitRateItem = new BitRateItem;
+		bitRateItem->text = "Bit rate";
+		bitRateItem->rightText = RIGHT_ARROW;
+		bitRateItem->module = module;
+		menu->addChild(bitRateItem);
 	}
 };
 
