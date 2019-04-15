@@ -13,8 +13,13 @@ extern "C" {
 ////////////////////
 
 
-inline int16_t floatToS16(float x) {
+static int16_t floatToS16(float x) {
 	return (int16_t) std::round(clamp(x, -1.f, 1.f) * 0x7fff);
+}
+
+
+static int32_t floatToS32(float x) {
+	return (int32_t) std::round(clamp(x, -1.f, 1.f) * 0x7fffffff);
 }
 
 
@@ -77,22 +82,39 @@ struct Encoder {
 		int err;
 		assert(formatCtx && audioCodec && audioCtx && audioStream && audioFrame);
 
+		// audioStream->time_base = (AVRational) {1, audioCtx->sample_rate};
+
 		err = avcodec_open2(audioCtx, audioCodec, NULL);
 		assert(err >= 0);
+
+		err = avcodec_parameters_from_context(audioStream->codecpar, audioCtx);
+		assert(err >= 0);
+
+#if 0
+		av_dump_format(formatCtx, 0, NULL, true);
+
+		// Supported sample rates
+		for (const int *x = audioCodec->supported_samplerates; x && *x != 0; x++) {
+			DEBUG("sample rate: %d", *x);
+		}
+
+		// Supported sample formats
+		for (const enum AVSampleFormat *x = audioCodec->sample_fmts; x && *x != -1; x++) {
+			DEBUG("sample format: %s", av_get_sample_fmt_name(*x));
+		}
+#endif
 
 		// Set up frame
 		audioFrame->format = audioCtx->sample_fmt;
 		audioFrame->channel_layout = audioCtx->channel_layout;
 		audioFrame->sample_rate = audioCtx->sample_rate;
 		audioFrame->nb_samples = audioCtx->frame_size;
+		// PCM doesn't set nb_samples, so use a sane default.
+		if (audioFrame->nb_samples == 0)
+			audioFrame->nb_samples = 256;
 
 		err = av_frame_get_buffer(audioFrame, 0);
 		assert(err >= 0);
-
-    err = avcodec_parameters_from_context(audioStream->codecpar, audioCtx);
-    assert(err >= 0);
-
-		// av_dump_format(formatCtx, 0, NULL, true);
 
 		err = avformat_write_header(formatCtx, NULL);
 		assert(err >= 0);
@@ -129,11 +151,19 @@ struct Encoder {
 	void openWAV(const std::string &path, int channels, int sampleRate, int depth) {
 		close();
 		initFormat("wav");
-		initAudio(AV_CODEC_ID_PCM_S16LE);
 
-		audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+		if (depth == 16) {
+			initAudio(AV_CODEC_ID_PCM_S16LE);
+			audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+		}
+		else if (depth == 24) {
+			initAudio(AV_CODEC_ID_PCM_S24LE);
+			audioCtx->sample_fmt = AV_SAMPLE_FMT_S32;
+		}
+		else {
+			assert(0);
+		}
 		audioCtx->sample_rate = sampleRate;
-		assert(depth == 16);
 		audioCtx->channels = channels;
 		if (channels == 1) {
 			audioCtx->channel_layout = AV_CH_LAYOUT_MONO;
@@ -144,6 +174,8 @@ struct Encoder {
 		else {
 			assert(0);
 		}
+		// Frame size is not automatically set by the PCM codec.
+		// audioCtx->frame_size = 64;
 
 		if (!initIO(path)) {
 			close();
@@ -159,6 +191,9 @@ struct Encoder {
 
 		if (depth == 16) {
 			audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+		}
+		else if (depth == 24) {
+			audioCtx->sample_fmt = AV_SAMPLE_FMT_S32;
 		}
 		else {
 			assert(0);
@@ -200,7 +235,6 @@ struct Encoder {
 		else {
 			assert(0);
 		}
-		// audioStream->time_base = (AVRational) {1, audioCtx->sample_rate};
 
 		if (!initIO(path)) {
 			close();
@@ -230,12 +264,18 @@ struct Encoder {
 				output[0][frameIndex * audioCtx->channels + i] = floatToS16(input[i]);
 			}
 		}
+		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S32) {
+			int32_t **output = (int32_t**) audioFrame->data;
+			for (int i = 0; i < audioCtx->channels; i++) {
+				output[0][frameIndex * audioCtx->channels + i] = floatToS32(input[i]);
+			}
+		}
 		else {
 			assert(0);
 		}
 
 		frameIndex++;
-		if (frameIndex >= audioCtx->frame_size) {
+		if (frameIndex >= audioFrame->nb_samples) {
 			frameIndex = 0;
 			flush();
 		}
@@ -295,7 +335,6 @@ struct Recorder : Module {
 	dsp::SchmittTrigger trigTrigger;
 	dsp::VuMeter2 vuMeter[2];
 	dsp::ClockDivider lightDivider;
-	bool gate = false;
 	Encoder *encoder;
 	std::mutex encoderMutex;
 
@@ -366,6 +405,8 @@ struct Recorder : Module {
 
 	void process(const ProcessArgs &args) override {
 		// Record state
+		bool gate = encoder->isOpen();
+		bool oldGate = gate;
 		if (recTrigger.process(params[REC_PARAM].getValue())) {
 			gate ^= true;
 		}
@@ -377,8 +418,8 @@ struct Recorder : Module {
 		}
 
 		// Start/stop
-		bool oldGate = encoder->isOpen();
 		if (gate && !oldGate) {
+			channels = inputs[RIGHT_INPUT].isConnected() ? 2 : 1;
 			start();
 		}
 		else if (!gate && oldGate) {
@@ -478,6 +519,10 @@ struct Recorder : Module {
 		return {16, 24};
 	}
 
+	bool showDepth() {
+		return (format == "wav" || format == "flac");
+	}
+
 	void setBitRate(int bitRate) {
 		std::lock_guard<std::mutex> lock(encoderMutex);
 		encoder->close();
@@ -486,6 +531,10 @@ struct Recorder : Module {
 
 	std::vector<int> getBitRates() {
 		return {128000, 160000, 192000, 224000, 256000, 320000};
+	}
+
+	bool showBitRate() {
+		return (format == "mp3");
 	}
 };
 
@@ -662,7 +711,7 @@ struct RecorderWidget : ModuleWidget {
 		menu->addChild(new MenuEntry);
 
 		PathItem *pathItem = new PathItem;
-		pathItem->text = "Set output file";
+		pathItem->text = "Select output file";
 		pathItem->module = module;
 		menu->addChild(pathItem);
 
@@ -690,17 +739,21 @@ struct RecorderWidget : ModuleWidget {
 		sampleRateItem->module = module;
 		menu->addChild(sampleRateItem);
 
-		DepthItem *depthItem = new DepthItem;
-		depthItem->text = "Bit depth";
-		depthItem->rightText = RIGHT_ARROW;
-		depthItem->module = module;
-		menu->addChild(depthItem);
+		if (module->showDepth()) {
+			DepthItem *depthItem = new DepthItem;
+			depthItem->text = "Bit depth";
+			depthItem->rightText = RIGHT_ARROW;
+			depthItem->module = module;
+			menu->addChild(depthItem);
+		}
 
-		BitRateItem *bitRateItem = new BitRateItem;
-		bitRateItem->text = "Bit rate";
-		bitRateItem->rightText = RIGHT_ARROW;
-		bitRateItem->module = module;
-		menu->addChild(bitRateItem);
+		if (module->showBitRate()) {
+			BitRateItem *bitRateItem = new BitRateItem;
+			bitRateItem->text = "Bit rate";
+			bitRateItem->rightText = RIGHT_ARROW;
+			bitRateItem->module = module;
+			menu->addChild(bitRateItem);
+		}
 	}
 };
 

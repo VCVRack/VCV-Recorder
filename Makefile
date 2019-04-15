@@ -28,7 +28,7 @@ $(ffmpeg): $(lame)
 	cd dep/ffmpeg && $(CONFIGURE) --enable-pic --enable-gpl \
 		--disable-programs --disable-doc --disable-avdevice --disable-swresample --disable-swscale --disable-postproc --disable-avfilter --disable-network --disable-iconv --disable-alsa --disable-autodetect --disable-everything \
 		--enable-protocol=file \
-		--enable-muxer=wav --enable-encoder=pcm_s16le \
+		--enable-muxer=wav --enable-encoder=pcm_s16le --enable-encoder=pcm_s24le \
 		--enable-libmp3lame --enable-muxer=mp3 --enable-encoder=libmp3lame \
 		--enable-muxer=flac --enable-encoder=flac
 	cd dep/ffmpeg && $(MAKE)
