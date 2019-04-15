@@ -1,4 +1,6 @@
 #include "plugin.hpp"
+#include "osdialog.h"
+#include <mutex>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -6,7 +8,9 @@ extern "C" {
 }
 
 
-static const int MAX_BUFFER_LEN = 1024;
+////////////////////
+// DSP
+////////////////////
 
 
 inline int16_t floatToS16(float x) {
@@ -40,13 +44,13 @@ struct Encoder {
 		audioCodec = avcodec_find_encoder(id);
 		assert(audioCodec);
 
-		assert(!audioStream);
-		audioStream = avformat_new_stream(formatCtx, audioCodec);
-		assert(audioStream);
-
 		assert(!audioCtx);
 		audioCtx = avcodec_alloc_context3(audioCodec);
 		assert(audioCtx);
+
+		assert(!audioStream);
+		audioStream = avformat_new_stream(formatCtx, audioCodec);
+		assert(audioStream);
 
 		assert(!audioFrame);
 		audioFrame = av_frame_alloc();
@@ -99,13 +103,15 @@ struct Encoder {
 		if (audioFrame)
 			av_frame_free(&audioFrame);
 		if (formatCtx && audioCtx)
-			flushAudio();
+			flush();
 		// Write trailer of file
 		if (formatCtx)
 			av_write_trailer(formatCtx);
 		// Clean up objects
 		if (audioCtx)
 			avcodec_free_context(&audioCtx);
+		audioCodec = NULL;
+		audioStream = NULL;
 		if (io) {
 			avio_close(io);
 			io = NULL;
@@ -116,7 +122,12 @@ struct Encoder {
 		}
 	}
 
+	bool isOpen() {
+		return formatCtx;
+	}
+
 	void openWAV(const std::string &path, int channels, int sampleRate, int depth) {
+		close();
 		initFormat("wav");
 		initAudio(AV_CODEC_ID_PCM_S16LE);
 
@@ -141,33 +152,8 @@ struct Encoder {
 		open();
 	}
 
-	void openMP3(const std::string &path, int channels, int sampleRate, int bitRate) {
-		initFormat("mp3");
-		initAudio(AV_CODEC_ID_MP3);
-
-		audioCtx->bit_rate = bitRate;
-		audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
-		audioCtx->sample_rate = sampleRate;
-		audioCtx->channels = channels;
-		if (channels == 1) {
-			audioCtx->channel_layout = AV_CH_LAYOUT_MONO;
-		}
-		else if (channels == 2) {
-			audioCtx->channel_layout = AV_CH_LAYOUT_STEREO;
-		}
-		else {
-			assert(0);
-		}
-		// audioStream->time_base = (AVRational) {1, audioCtx->sample_rate};
-
-		if (!initIO(path)) {
-			close();
-			return;
-		}
-		open();
-	}
-
 	void openFLAC(const std::string &path, int channels, int sampleRate, int depth) {
+		close();
 		initFormat("flac");
 		initAudio(AV_CODEC_ID_FLAC);
 
@@ -188,6 +174,33 @@ struct Encoder {
 		else {
 			assert(0);
 		}
+
+		if (!initIO(path)) {
+			close();
+			return;
+		}
+		open();
+	}
+
+	void openMP3(const std::string &path, int channels, int sampleRate, int bitRate) {
+		close();
+		initFormat("mp3");
+		initAudio(AV_CODEC_ID_MP3);
+
+		audioCtx->bit_rate = bitRate;
+		audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+		audioCtx->sample_rate = sampleRate;
+		audioCtx->channels = channels;
+		if (channels == 1) {
+			audioCtx->channel_layout = AV_CH_LAYOUT_MONO;
+		}
+		else if (channels == 2) {
+			audioCtx->channel_layout = AV_CH_LAYOUT_STEREO;
+		}
+		else {
+			assert(0);
+		}
+		// audioStream->time_base = (AVRational) {1, audioCtx->sample_rate};
 
 		if (!initIO(path)) {
 			close();
@@ -224,11 +237,11 @@ struct Encoder {
 		frameIndex++;
 		if (frameIndex >= audioCtx->frame_size) {
 			frameIndex = 0;
-			flushAudio();
+			flush();
 		}
 	}
 
-	void flushAudio() {
+	void flush() {
 		int err;
 		assert(formatCtx && audioCtx);
 
@@ -249,6 +262,11 @@ struct Encoder {
 		}
 	}
 };
+
+
+////////////////////
+// Modules
+////////////////////
 
 
 struct Recorder : Module {
@@ -276,8 +294,10 @@ struct Recorder : Module {
 	dsp::BooleanTrigger recTrigger;
 	dsp::SchmittTrigger trigTrigger;
 	dsp::VuMeter2 vuMeter[2];
+	dsp::ClockDivider lightDivider;
 	bool gate = false;
 	Encoder *encoder;
+	std::mutex encoderMutex;
 
 	// Format settings
 	std::string format;
@@ -292,9 +312,9 @@ struct Recorder : Module {
 		configParam(GAIN_PARAM, 0.f, 2.f, 1.f, "Gain", " dB", -10, 20);
 		configParam(REC_PARAM, 0.f, 1.f, 0.f, "Record");
 
+		lightDivider.setDivision(512);
 		encoder = new Encoder;
 		onReset();
-		start();
 	}
 
 	~Recorder() {
@@ -302,12 +322,46 @@ struct Recorder : Module {
 	}
 
 	void onReset() override {
-		format = "FLAC";
+		format = "wav";
 		path = "out.wav";
 		channels = 2;
 		sampleRate = 44100;
 		depth = 16;
-		bitRate = 256000;
+		bitRate = 320000;
+	}
+
+	json_t *dataToJson() override {
+		json_t *rootJ = json_object();
+		json_object_set_new(rootJ, "format", json_string(format.c_str()));
+		json_object_set_new(rootJ, "path", json_string(path.c_str()));
+		json_object_set_new(rootJ, "sampleRate", json_integer(sampleRate));
+		json_object_set_new(rootJ, "depth", json_integer(depth));
+		json_object_set_new(rootJ, "bitRate", json_integer(bitRate));
+		return rootJ;
+	}
+
+	void dataFromJson(json_t *rootJ) override {
+		stop();
+
+		json_t *formatJ = json_object_get(rootJ, "format");
+		if (formatJ)
+			format = json_string_value(formatJ);
+
+		json_t *pathJ = json_object_get(rootJ, "path");
+		if (pathJ)
+			path = json_string_value(pathJ);
+
+		json_t *sampleRateJ = json_object_get(rootJ, "sampleRate");
+		if (sampleRateJ)
+			sampleRate = json_integer_value(sampleRateJ);
+
+		json_t *depthJ = json_object_get(rootJ, "depth");
+		if (depthJ)
+			depth = json_integer_value(depthJ);
+
+		json_t *bitRateJ = json_object_get(rootJ, "bitRate");
+		if (bitRateJ)
+			bitRate = json_integer_value(bitRateJ);
 	}
 
 	void process(const ProcessArgs &args) override {
@@ -322,6 +376,16 @@ struct Recorder : Module {
 			gate = (inputs[GATE_INPUT].getVoltage() >= 2.f);
 		}
 
+		// Start/stop
+		bool oldGate = encoder->isOpen();
+		if (gate && !oldGate) {
+			start();
+		}
+		else if (!gate && oldGate) {
+			stop();
+		}
+		gate = encoder->isOpen();
+
 		// Input
 		float gain = params[GAIN_PARAM].getValue();
 		float in[2];
@@ -329,61 +393,106 @@ struct Recorder : Module {
 		in[1] = inputs[RIGHT_INPUT].getVoltage() / 10.f * gain;
 
 		// Process
-		encoder->writeAudio(in);
+		{
+			std::lock_guard<std::mutex> lock(encoderMutex);
+			encoder->writeAudio(in);
+		}
 
 		// Lights
 		for (int i = 0; i < 2; i++) {
 			vuMeter[i].process(args.sampleTime, in[i]);
-			lights[VU_LIGHTS + i * 6 + 0].setBrightness(vuMeter[i].getBrightness(0, 0));
-			lights[VU_LIGHTS + i * 6 + 1].setBrightness(vuMeter[i].getBrightness(-3, 0));
-			lights[VU_LIGHTS + i * 6 + 2].setBrightness(vuMeter[i].getBrightness(-6, -3));
-			lights[VU_LIGHTS + i * 6 + 3].setBrightness(vuMeter[i].getBrightness(-12, -6));
-			lights[VU_LIGHTS + i * 6 + 4].setBrightness(vuMeter[i].getBrightness(-24, -12));
-			lights[VU_LIGHTS + i * 6 + 5].setBrightness(vuMeter[i].getBrightness(-36, -24));
 		}
+		if (lightDivider.process()) {
+			for (int i = 0; i < 2; i++) {
+				lights[VU_LIGHTS + i * 6 + 0].setBrightness(vuMeter[i].getBrightness(0, 0));
+				lights[VU_LIGHTS + i * 6 + 1].setBrightness(vuMeter[i].getBrightness(-3, 0));
+				lights[VU_LIGHTS + i * 6 + 2].setBrightness(vuMeter[i].getBrightness(-6, -3));
+				lights[VU_LIGHTS + i * 6 + 3].setBrightness(vuMeter[i].getBrightness(-12, -6));
+				lights[VU_LIGHTS + i * 6 + 4].setBrightness(vuMeter[i].getBrightness(-24, -12));
+				lights[VU_LIGHTS + i * 6 + 5].setBrightness(vuMeter[i].getBrightness(-36, -24));
+			}
 
-		lights[REC_LIGHT].setBrightness(gate);
+			lights[REC_LIGHT].setBrightness(gate);
+		}
 	}
 
 	void start() {
-		encoder->close();
-		if (format == "WAV")
+		std::lock_guard<std::mutex> lock(encoderMutex);
+		if (format == "wav")
 			encoder->openWAV(path, channels, sampleRate, depth);
-		else if (format == "FLAC")
+		else if (format == "flac")
 			encoder->openFLAC(path, channels, sampleRate, depth);
-		else if (format == "MP3")
+		else if (format == "mp3")
 			encoder->openMP3(path, channels, sampleRate, bitRate);
 	}
 
 	void stop() {
+		std::lock_guard<std::mutex> lock(encoderMutex);
 		encoder->close();
 	}
 
+	// Settings
+
 	void setFormat(std::string format) {
-		stop();
+		std::lock_guard<std::mutex> lock(encoderMutex);
+		encoder->close();
 		this->format = format;
 	}
 
+	std::vector<std::string> getFormats() {
+		return {"wav", "flac", "mp3"};
+	}
+
+	std::string getFormatName(std::string format) {
+		static const std::map<std::string, std::string> names = {
+			{"wav", "WAV"},
+			{"flac", "FLAC"},
+			{"mp3", "MP3"},
+		};
+		return names.at(format);
+	}
+
 	void setPath(std::string path) {
-		stop();
+		std::lock_guard<std::mutex> lock(encoderMutex);
+		encoder->close();
 		this->path = path;
 	}
 
 	void setSampleRate(int sampleRate) {
-		stop();
+		std::lock_guard<std::mutex> lock(encoderMutex);
+		encoder->close();
 		this->sampleRate = sampleRate;
 	}
 
+	std::vector<int> getSampleRates() {
+		return {44100, 48000};
+	}
+
 	void setDepth(int depth) {
-		stop();
+		std::lock_guard<std::mutex> lock(encoderMutex);
+		encoder->close();
 		this->depth = depth;
 	}
 
+	std::vector<int> getDepths() {
+		return {16, 24};
+	}
+
 	void setBitRate(int bitRate) {
-		stop();
+		std::lock_guard<std::mutex> lock(encoderMutex);
+		encoder->close();
 		this->bitRate = bitRate;
 	}
+
+	std::vector<int> getBitRates() {
+		return {128000, 160000, 192000, 224000, 256000, 320000};
+	}
 };
+
+
+////////////////////
+// Widgets
+////////////////////
 
 
 struct BlackKnob : RoundKnob {
@@ -409,6 +518,80 @@ struct RecLight : RedLight {
 };
 
 
+struct PathItem : MenuItem {
+	Recorder *module;
+	void onAction(const widget::ActionEvent &e) override {
+		std::string dir = asset::user("");
+		char *path = osdialog_file(OSDIALOG_SAVE, dir.c_str(), "Untitled", NULL);
+		if (path) {
+			module->setPath(path);
+			free(path);
+		}
+	}
+};
+
+
+struct FormatItem : MenuItem {
+	Recorder *module;
+	std::string format;
+	void onAction(const widget::ActionEvent &e) override {
+		module->setFormat(format);
+	}
+};
+
+
+struct SampleRateValueItem : MenuItem {
+	Recorder *module;
+	int sampleRate;
+	void onAction(const widget::ActionEvent &e) override {
+		module->setSampleRate(sampleRate);
+	}
+};
+
+
+struct SampleRateItem : MenuItem {
+	Recorder *module;
+	Menu *createChildMenu() override {
+		Menu *menu = new Menu;
+		for (int sampleRate : module->getSampleRates()) {
+			SampleRateValueItem *item = new SampleRateValueItem;
+			item->text = string::f("%g kHz", sampleRate / 1000.0);
+			item->rightText = CHECKMARK(module->sampleRate == sampleRate);
+			item->module = module;
+			item->sampleRate = sampleRate;
+			menu->addChild(item);
+		}
+		return menu;
+	}
+};
+
+
+struct DepthValueItem : MenuItem {
+	Recorder *module;
+	int depth;
+	void onAction(const widget::ActionEvent &e) override {
+		module->setDepth(depth);
+	}
+};
+
+
+struct DepthItem : MenuItem {
+	Recorder *module;
+	Menu *createChildMenu() override {
+		Menu *menu = new Menu;
+		for (int depth : module->getDepths()) {
+			DepthValueItem *item = new DepthValueItem;
+			item->text = string::f("%d bit", depth);
+			item->rightText = CHECKMARK(module->depth == depth);
+			item->module = module;
+			item->depth = depth;
+			menu->addChild(item);
+		}
+		return menu;
+	}
+};
+
+
 struct BitRateValueItem : MenuItem {
 	Recorder *module;
 	int bitRate;
@@ -422,8 +605,7 @@ struct BitRateItem : MenuItem {
 	Recorder *module;
 	Menu *createChildMenu() override {
 		Menu *menu = new Menu;
-		const std::vector<int> bitRates = {128000, 160000, 192000, 224000, 256000, 320000};
-		for (int bitRate : bitRates) {
+		for (int bitRate : module->getBitRates()) {
 			BitRateValueItem *item = new BitRateValueItem;
 			item->text = string::f("%d kbps", bitRate / 1000);
 			item->rightText = CHECKMARK(module->bitRate == bitRate);
@@ -434,6 +616,11 @@ struct BitRateItem : MenuItem {
 		return menu;
 	}
 };
+
+
+////////////////////
+// ModuleWidgets
+////////////////////
 
 
 struct RecorderWidget : ModuleWidget {
@@ -473,6 +660,41 @@ struct RecorderWidget : ModuleWidget {
 		Recorder *module = dynamic_cast<Recorder*>(this->module);
 
 		menu->addChild(new MenuEntry);
+
+		PathItem *pathItem = new PathItem;
+		pathItem->text = "Set output file";
+		pathItem->module = module;
+		menu->addChild(pathItem);
+
+		std::string path = string::ellipsizePrefix(module->path, 25);
+		menu->addChild(createMenuLabel(path));
+
+		menu->addChild(new MenuEntry);
+		menu->addChild(createMenuLabel("Format"));
+
+		for (const std::string &format : module->getFormats()) {
+			FormatItem *formatItem = new FormatItem;
+			formatItem->text = module->getFormatName(format);
+			formatItem->rightText = CHECKMARK(format == module->format);
+			formatItem->module = module;
+			formatItem->format = format;
+			menu->addChild(formatItem);
+		}
+
+		menu->addChild(new MenuEntry);
+		menu->addChild(createMenuLabel("Settings"));
+
+		SampleRateItem *sampleRateItem = new SampleRateItem;
+		sampleRateItem->text = "Sample rate";
+		sampleRateItem->rightText = RIGHT_ARROW;
+		sampleRateItem->module = module;
+		menu->addChild(sampleRateItem);
+
+		DepthItem *depthItem = new DepthItem;
+		depthItem->text = "Bit depth";
+		depthItem->rightText = RIGHT_ARROW;
+		depthItem->module = module;
+		menu->addChild(depthItem);
 
 		BitRateItem *bitRateItem = new BitRateItem;
 		bitRateItem->text = "Bit rate";
