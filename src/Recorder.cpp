@@ -13,16 +13,6 @@ extern "C" {
 ////////////////////
 
 
-static int16_t floatToS16(float x) {
-	return (int16_t) std::round(clamp(x, -1.f, 1.f) * 0x7fff);
-}
-
-
-static int32_t floatToS32(float x) {
-	return (int32_t) std::round(clamp(x, -1.f, 1.f) * 0x7fffffff);
-}
-
-
 struct Encoder {
 	AVIOContext *io = NULL;
 	AVFormatContext *formatCtx = NULL;
@@ -243,6 +233,8 @@ struct Encoder {
 		open();
 	}
 
+	/** `input` must be `audioCtx->channels` length and between -1 and 1.
+	*/
 	void writeAudio(float *input) {
 		int err;
 		if (!audioCtx)
@@ -255,19 +247,22 @@ struct Encoder {
 		if (audioCtx->sample_fmt == AV_SAMPLE_FMT_FLTP) {
 			float **output = (float**) audioFrame->data;
 			for (int i = 0; i < audioCtx->channels; i++) {
-				output[i][frameIndex] = input[i];
+				float v = clamp(input[i], -1.f, 1.f);
+				output[i][frameIndex] = v;
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S16) {
 			int16_t **output = (int16_t**) audioFrame->data;
 			for (int i = 0; i < audioCtx->channels; i++) {
-				output[0][frameIndex * audioCtx->channels + i] = floatToS16(input[i]);
+				float v = clamp(input[i], -1.f, 1.f);
+				output[0][frameIndex * audioCtx->channels + i] = (int16_t) std::round(v * 0x7fff);
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S32) {
 			int32_t **output = (int32_t**) audioFrame->data;
 			for (int i = 0; i < audioCtx->channels; i++) {
-				output[0][frameIndex * audioCtx->channels + i] = floatToS32(input[i]);
+				float v = clamp(input[i], -1.f, 1.f);
+				output[0][frameIndex * audioCtx->channels + i] = (int32_t) std::round(v * 0x7fffffff);
 			}
 		}
 		else {
@@ -361,7 +356,7 @@ struct Recorder : Module {
 	}
 
 	void onReset() override {
-		format = "wav";
+		format = "WAV";
 		path = "out.wav";
 		channels = 2;
 		sampleRate = 44100;
@@ -459,11 +454,11 @@ struct Recorder : Module {
 
 	void start() {
 		std::lock_guard<std::mutex> lock(encoderMutex);
-		if (format == "wav")
+		if (format == "WAV")
 			encoder->openWAV(path, channels, sampleRate, depth);
-		else if (format == "flac")
+		else if (format == "FLAC")
 			encoder->openFLAC(path, channels, sampleRate, depth);
-		else if (format == "mp3")
+		else if (format == "MP3")
 			encoder->openMP3(path, channels, sampleRate, bitRate);
 	}
 
@@ -481,14 +476,14 @@ struct Recorder : Module {
 	}
 
 	std::vector<std::string> getFormats() {
-		return {"wav", "flac", "mp3"};
+		return {"WAV", "FLAC", "MP3"};
 	}
 
 	std::string getFormatName(std::string format) {
 		static const std::map<std::string, std::string> names = {
-			{"wav", "WAV"},
-			{"flac", "FLAC"},
-			{"mp3", "MP3"},
+			{"WAV", "WAV"},
+			{"FLAC", "FLAC"},
+			{"MP3", "MP3"},
 		};
 		return names.at(format);
 	}
@@ -520,7 +515,7 @@ struct Recorder : Module {
 	}
 
 	bool showDepth() {
-		return (format == "wav" || format == "flac");
+		return (format == "WAV" || format == "FLAC");
 	}
 
 	void setBitRate(int bitRate) {
@@ -534,7 +529,7 @@ struct Recorder : Module {
 	}
 
 	bool showBitRate() {
-		return (format == "mp3");
+		return (format == "MP3");
 	}
 };
 
