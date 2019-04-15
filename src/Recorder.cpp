@@ -5,6 +5,7 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libswresample/swresample.h>
 }
 
 
@@ -20,6 +21,7 @@ struct Encoder {
 	AVCodecContext *audioCtx = NULL;
 	AVStream *audioStream = NULL;
 	AVFrame *audioFrame = NULL;
+	struct SwrContext *swr = NULL;
 	int frameIndex = 0;
 
 	~Encoder() {
@@ -51,9 +53,9 @@ struct Encoder {
 		audioFrame = av_frame_alloc();
 		assert(audioFrame);
 
-		// TODO allocate resampler
-		// swr_alloc();
-		// swr_init();
+		assert(!swr);
+		swr = swr_alloc();
+		assert(swr);
 	}
 
 	bool initIO(const std::string &path) {
@@ -106,7 +108,15 @@ struct Encoder {
 		err = av_frame_get_buffer(audioFrame, 0);
 		assert(err >= 0);
 
+		// Set up resampler
+		swr_alloc_set_opts(swr,
+			audioFrame->channel_layout, audioCtx->sample_fmt, audioFrame->sample_rate,
+			audioFrame->channel_layout, audioCtx->sample_fmt, audioFrame->sample_rate,
+			0, NULL);
+
 		err = avformat_write_header(formatCtx, NULL);
+		// char e[1000];
+		// DEBUG("error: %s", av_make_error_string(e, sizeof(e), err));
 		assert(err >= 0);
 	}
 
@@ -124,6 +134,8 @@ struct Encoder {
 			avcodec_free_context(&audioCtx);
 		audioCodec = NULL;
 		audioStream = NULL;
+		if (swr)
+			swr_free(&swr);
 		if (io) {
 			avio_close(io);
 			io = NULL;
@@ -136,6 +148,23 @@ struct Encoder {
 
 	bool isOpen() {
 		return formatCtx;
+	}
+
+	void initChannels(int channels) {
+		audioCtx->channels = channels;
+		if (channels == 1) {
+			audioCtx->channel_layout = AV_CH_LAYOUT_MONO;
+		}
+		else if (channels == 2) {
+			audioCtx->channel_layout = AV_CH_LAYOUT_STEREO;
+		}
+		else {
+			assert(0);
+		}
+	}
+
+	void initSampleRate(int sampleRate) {
+		audioCtx->sample_rate = sampleRate;
 	}
 
 	void openWAV(const std::string &path, int channels, int sampleRate, int depth) {
@@ -153,20 +182,34 @@ struct Encoder {
 		else {
 			assert(0);
 		}
-		audioCtx->sample_rate = sampleRate;
-		audioCtx->channels = channels;
-		if (channels == 1) {
-			audioCtx->channel_layout = AV_CH_LAYOUT_MONO;
+
+		initChannels(channels);
+		initSampleRate(sampleRate);
+		if (!initIO(path)) {
+			close();
+			return;
 		}
-		else if (channels == 2) {
-			audioCtx->channel_layout = AV_CH_LAYOUT_STEREO;
+		open();
+	}
+
+	void openAIFF(const std::string &path, int channels, int sampleRate, int depth) {
+		close();
+		initFormat("aiff");
+
+		if (depth == 16) {
+			initAudio(AV_CODEC_ID_PCM_S16BE);
+			audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+		}
+		else if (depth == 24) {
+			initAudio(AV_CODEC_ID_PCM_S24BE);
+			audioCtx->sample_fmt = AV_SAMPLE_FMT_S32;
 		}
 		else {
 			assert(0);
 		}
-		// Frame size is not automatically set by the PCM codec.
-		// audioCtx->frame_size = 64;
 
+		initChannels(channels);
+		initSampleRate(sampleRate);
 		if (!initIO(path)) {
 			close();
 			return;
@@ -178,23 +221,14 @@ struct Encoder {
 		close();
 		initFormat("flac");
 		initAudio(AV_CODEC_ID_FLAC);
+		initChannels(channels);
+		initSampleRate(sampleRate);
 
 		if (depth == 16) {
 			audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 		}
 		else if (depth == 24) {
 			audioCtx->sample_fmt = AV_SAMPLE_FMT_S32;
-		}
-		else {
-			assert(0);
-		}
-		audioCtx->sample_rate = sampleRate;
-		audioCtx->channels = channels;
-		if (channels == 1) {
-			audioCtx->channel_layout = AV_CH_LAYOUT_MONO;
-		}
-		else if (channels == 2) {
-			audioCtx->channel_layout = AV_CH_LAYOUT_STEREO;
 		}
 		else {
 			assert(0);
@@ -211,20 +245,11 @@ struct Encoder {
 		close();
 		initFormat("mp3");
 		initAudio(AV_CODEC_ID_MP3);
+		initChannels(channels);
+		initSampleRate(sampleRate);
 
 		audioCtx->bit_rate = bitRate;
 		audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
-		audioCtx->sample_rate = sampleRate;
-		audioCtx->channels = channels;
-		if (channels == 1) {
-			audioCtx->channel_layout = AV_CH_LAYOUT_MONO;
-		}
-		else if (channels == 2) {
-			audioCtx->channel_layout = AV_CH_LAYOUT_STEREO;
-		}
-		else {
-			assert(0);
-		}
 
 		if (!initIO(path)) {
 			close();
@@ -456,6 +481,8 @@ struct Recorder : Module {
 		std::lock_guard<std::mutex> lock(encoderMutex);
 		if (format == "WAV")
 			encoder->openWAV(path, channels, sampleRate, depth);
+		if (format == "AIFF")
+			encoder->openAIFF(path, channels, sampleRate, depth);
 		else if (format == "FLAC")
 			encoder->openFLAC(path, channels, sampleRate, depth);
 		else if (format == "MP3")
@@ -476,12 +503,13 @@ struct Recorder : Module {
 	}
 
 	std::vector<std::string> getFormats() {
-		return {"WAV", "FLAC", "MP3"};
+		return {"WAV", "AIFF", "FLAC", "MP3"};
 	}
 
 	std::string getFormatName(std::string format) {
 		static const std::map<std::string, std::string> names = {
 			{"WAV", "WAV"},
+			{"AIFF", "AIFF"},
 			{"FLAC", "FLAC"},
 			{"MP3", "MP3"},
 		};
@@ -515,7 +543,7 @@ struct Recorder : Module {
 	}
 
 	bool showDepth() {
-		return (format == "WAV" || format == "FLAC");
+		return (format == "WAV" || format == "AIFF" || format == "FLAC");
 	}
 
 	void setBitRate(int bitRate) {
@@ -749,6 +777,15 @@ struct RecorderWidget : ModuleWidget {
 			bitRateItem->module = module;
 			menu->addChild(bitRateItem);
 		}
+	}
+
+	void draw(const DrawArgs &args) override {
+		ModuleWidget::draw(args);
+
+		// int w, h;
+		// glfwGetFramebufferSize(APP->window->win, &w, &h);
+		// uint8_t image[h][w][4];
+		// glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, image);
 	}
 };
 

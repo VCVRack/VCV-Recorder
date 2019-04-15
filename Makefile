@@ -19,6 +19,7 @@ lame := dep/lib/libmp3lame.a
 OBJECTS += dep/lib/libavformat.a
 OBJECTS += dep/lib/libavcodec.a
 OBJECTS += dep/lib/libavutil.a
+OBJECTS += dep/lib/libswresample.a
 OBJECTS += $(lame)
 
 DEP_LOCAL := dep
@@ -26,11 +27,13 @@ DEPS += $(ffmpeg)
 
 $(ffmpeg): $(lame)
 	cd dep/ffmpeg && $(CONFIGURE) --enable-pic --enable-gpl \
-		--disable-programs --disable-doc --disable-avdevice --disable-swresample --disable-swscale --disable-postproc --disable-avfilter --disable-network --disable-iconv --disable-alsa --disable-autodetect --disable-everything \
+		--disable-programs --disable-doc --disable-avdevice --disable-swscale --disable-postproc --disable-avfilter --disable-network --disable-iconv --disable-alsa --disable-autodetect --disable-everything \
 		--enable-protocol=file \
 		--enable-muxer=wav --enable-encoder=pcm_s16le --enable-encoder=pcm_s24le \
+		--enable-muxer=aiff --enable-encoder=pcm_s16be --enable-encoder=pcm_s24be \
 		--enable-libmp3lame --enable-muxer=mp3 --enable-encoder=libmp3lame \
-		--enable-muxer=flac --enable-encoder=flac
+		--enable-muxer=flac --enable-encoder=flac \
+		--enable-muxer=mpeg2video --enable-encoder=mpeg2video --enable-encoder=mp2
 	cd dep/ffmpeg && $(MAKE)
 	cd dep/ffmpeg && $(MAKE) install
 
