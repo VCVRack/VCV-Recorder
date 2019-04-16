@@ -33,7 +33,7 @@ $(ffmpeg): $(lame)
 		--enable-muxer=aiff --enable-encoder=pcm_s16be --enable-encoder=pcm_s24be \
 		--enable-libmp3lame --enable-muxer=mp3 --enable-encoder=libmp3lame \
 		--enable-muxer=flac --enable-encoder=flac \
-		--enable-muxer=mpeg2video --enable-encoder=mpeg2video --enable-encoder=mp2
+		--enable-muxer=mpeg1system --enable-encoder=mpeg2video --enable-encoder=mp2
 	cd dep/ffmpeg && $(MAKE)
 	cd dep/ffmpeg && $(MAKE) install
 
