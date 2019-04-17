@@ -14,6 +14,13 @@ extern "C" {
 ////////////////////
 
 
+static void printFfmpegError(int err) {
+	char str[AV_ERROR_MAX_STRING_SIZE];
+	av_strerror(err, str, sizeof(str));
+	DEBUG("ffmpeg error: %s", str);
+}
+
+
 struct Encoder {
 	AVIOContext *io = NULL;
 	AVFormatContext *formatCtx = NULL;
@@ -99,11 +106,9 @@ struct Encoder {
 		assert(formatCtx && audioCodec && audioCtx && audioStream && audioFrame);
 
 		audioCtx->time_base = (AVRational) {1, audioCtx->sample_rate};
-		audioStream->time_base = audioCtx->time_base;
 
-		if (videoStream) {
-			videoStream->time_base = (AVRational) {1, 60};
-			videoCtx->time_base = videoStream->time_base;
+		if (videoCtx) {
+			videoCtx->time_base = (AVRational) {1, 60};
 		}
 
 #if 0
@@ -115,6 +120,18 @@ struct Encoder {
 		// Supported sample formats
 		for (const enum AVSampleFormat *x = audioCodec->sample_fmts; x && *x != -1; x++) {
 			DEBUG("sample format: %s", av_get_sample_fmt_name(*x));
+		}
+
+		if (videoCodec) {
+			// Supported framerates
+			for (const AVRational *x = videoCodec->supported_framerates; x && x->num != 0; x++) {
+				DEBUG("framerate: %d/%d", x->num, x->den);
+			}
+
+			// Supported pixel formats
+			for (const enum AVPixelFormat *x = videoCodec->pix_fmts; x && *x != -1; x++) {
+				DEBUG("pixel format: %d", *x);
+			}
 		}
 #endif
 
@@ -149,7 +166,11 @@ struct Encoder {
 		assert(err >= 0);
 
 		if (videoFrame) {
-			err = av_frame_get_buffer(audioFrame, 0);
+			videoFrame->format = videoCtx->pix_fmt;
+			videoFrame->width = videoCtx->width;
+			videoFrame->height = videoCtx->height;
+
+			err = av_frame_get_buffer(videoFrame, 0);
 			assert(err >= 0);
 		}
 
@@ -164,16 +185,18 @@ struct Encoder {
 	}
 
 	void close() {
-		// Flush a NULL frame to end the stream.
+		if (formatCtx) {
+			// Flush a NULL frame to end the stream.
+			flushFrame(audioCtx, audioStream, NULL);
+			if (videoCtx)
+				flushFrame(videoCtx, videoStream, NULL);
+			// Write trailer to file
+			av_write_trailer(formatCtx);
+		}
+
+		// Clean up audio
 		if (audioFrame)
 			av_frame_free(&audioFrame);
-		if (formatCtx && audioCtx)
-			flush();
-		// Write trailer of file
-		if (formatCtx)
-			av_write_trailer(formatCtx);
-
-		// Clean up objects
 		if (audioCtx)
 			avcodec_free_context(&audioCtx);
 		audioCodec = NULL;
@@ -181,6 +204,7 @@ struct Encoder {
 		if (swr)
 			swr_free(&swr);
 
+		// Clean up video
 		if (videoFrame)
 			av_frame_free(&videoFrame);
 		if (videoCtx)
@@ -188,6 +212,7 @@ struct Encoder {
 		videoCodec = NULL;
 		videoStream = NULL;
 
+		// Clean up IO and format
 		if (io) {
 			avio_close(io);
 			io = NULL;
@@ -372,30 +397,76 @@ struct Encoder {
 			assert(0);
 		}
 
+		// if ((videoFrame->pts + 1) * videoCtx->time_base.num * audioCtx->time_base.den < (audioFrame->pts + 1) * audioCtx->time_base.num * videoCtx->time_base.den) {
+		// 	DEBUG("video %d pts", videoFrame->pts);
+		// 	writeVideo();
+		// 	flushFrame(videoCtx, videoStream, videoFrame);
+		// }
+
+		// DEBUG("audio %d pts", audioFrame->pts);
+
 		frameIndex++;
 		if (frameIndex >= audioFrame->nb_samples) {
 			frameIndex = 0;
-			flush();
+			flushFrame(audioCtx, audioStream, audioFrame);
 		}
+
+		// Advance frame
+		audioFrame->pts++;
 	}
 
-	void flush() {
+	void writeVideo() {
 		int err;
-		assert(formatCtx && audioCtx);
+		if (!videoCtx)
+			return;
+
+		assert(videoFrame);
+		err = av_frame_make_writable(videoFrame);
+		assert(err >= 0);
+
+		assert(videoCtx->pix_fmt == AV_PIX_FMT_YUV420P);
+		// Generate YUV420
+		int w = videoCtx->width;
+		int h = videoCtx->height;
+		// Y
+		for (int y = 0; y < h; y++) {
+			for (int x = 0; x < w; x++) {
+				videoFrame->data[0][y * videoFrame->linesize[0] + x] = x + y;
+			}
+		}
+		// Cb and Cr
+		for (int y = 0; y < h / 2; y++) {
+			for (int x = 0; x < w / 2; x++) {
+				videoFrame->data[1][y * videoFrame->linesize[1] + x] = 128 + y;
+				videoFrame->data[2][y * videoFrame->linesize[1] + x] = 64 + x;
+			}
+		}
+
+		// Advance frame
+		videoFrame->pts++;
+	}
+
+	void flushFrame(AVCodecContext *ctx, AVStream *stream, AVFrame *frame) {
+		int err;
+		assert(formatCtx);
 
 		// frame may be NULL to signal the end of the stream.
-		err = avcodec_send_frame(audioCtx, audioFrame);
+		err = avcodec_send_frame(ctx, frame);
 		assert(err >= 0);
 
 		while (1) {
 			AVPacket pkt;
 			av_init_packet(&pkt);
 
-			err = avcodec_receive_packet(audioCtx, &pkt);
-			if (err == AVERROR(EAGAIN) || err == AVERROR_EOF)
+			err = avcodec_receive_packet(ctx, &pkt);
+			if (err < 0)
 				break;
 
+			av_packet_rescale_ts(&pkt, ctx->time_base, stream->time_base);
+			pkt.stream_index = stream->index;
+
 			err = av_interleaved_write_frame(formatCtx, &pkt);
+			// printFfmpegError(err);
 			assert(err >= 0);
 		}
 	}
