@@ -49,9 +49,8 @@ struct Encoder {
 
 	void openWAV(const std::string &path, int channels, int sampleRate, int depth) {
 		close();
-		if (!initIO(path)) {
+		if (!initIO(path))
 			return;
-		}
 		initMuxer("wav");
 
 		if (depth == 16) {
@@ -73,9 +72,8 @@ struct Encoder {
 
 	void openAIFF(const std::string &path, int channels, int sampleRate, int depth) {
 		close();
-		if (!initIO(path)) {
+		if (!initIO(path))
 			return;
-		}
 		initMuxer("aiff");
 
 		if (depth == 16) {
@@ -97,9 +95,8 @@ struct Encoder {
 
 	void openFLAC(const std::string &path, int channels, int sampleRate, int depth) {
 		close();
-		if (!initIO(path)) {
+		if (!initIO(path))
 			return;
-		}
 		initMuxer("flac");
 		initAudio("flac");
 		initChannels(channels);
@@ -120,9 +117,8 @@ struct Encoder {
 
 	void openALAC(const std::string &path, int channels, int sampleRate, int depth) {
 		close();
-		if (!initIO(path)) {
+		if (!initIO(path))
 			return;
-		}
 		initMuxer("ipod");
 		initAudio("alac");
 		initChannels(channels);
@@ -143,9 +139,8 @@ struct Encoder {
 
 	void openMP3(const std::string &path, int channels, int sampleRate, int bitRate) {
 		close();
-		if (!initIO(path)) {
+		if (!initIO(path))
 			return;
-		}
 		initMuxer("mp3");
 		initAudio("libmp3lame");
 		initChannels(channels);
@@ -159,9 +154,11 @@ struct Encoder {
 
 	void openMPEG2(const std::string &path, int channels, int sampleRate, int bitRate, int width, int height) {
 		close();
-		if (!initIO(path)) {
+		if (!(width > 0 && height > 0))
 			return;
-		}
+		if (!initIO(path))
+			return;
+
 		initMuxer("mpeg");
 		initAudio("mp2");
 		initVideo("mpeg2video");

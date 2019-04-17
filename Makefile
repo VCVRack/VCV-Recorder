@@ -41,6 +41,7 @@ $(ffmpeg): $(lame)
 
 $(lame):
 	cd dep && $(WGET) "https://sourceforge.net/projects/lame/files/lame/3.100/lame-3.100.tar.gz"
+	cd dep && $(SHA256) lame-3.100.tar.gz ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e
 	cd dep && $(UNTAR) "lame-3.100.tar.gz"
 	cd dep/lame-3.100 && $(CONFIGURE)
 	cd dep/lame-3.100 && $(MAKE) install
