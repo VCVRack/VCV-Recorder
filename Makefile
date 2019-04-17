@@ -3,8 +3,10 @@ RACK_DIR ?= ../..
 FLAGS += -Idep/include
 CFLAGS +=
 CXXFLAGS +=
-# No idea what this does. Recommended by https://ffmpeg.org/platform.html#Advanced-linking-configuration
-LDFLAGS += -Wl,-Bsymbolic
+ifdef ARCH_LIN
+	# No idea what this does. Recommended by https://ffmpeg.org/platform.html#Advanced-linking-configuration
+	LDFLAGS += -Wl,-Bsymbolic
+endif
 
 SOURCES += $(wildcard src/*.cpp)
 
