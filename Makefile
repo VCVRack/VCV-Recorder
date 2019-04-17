@@ -1,6 +1,6 @@
 RACK_DIR ?= ../..
 
-FLAGS +=
+FLAGS += -Idep/include
 CFLAGS +=
 CXXFLAGS +=
 # No idea what this does. Recommended by https://ffmpeg.org/platform.html#Advanced-linking-configuration
@@ -46,7 +46,7 @@ $(lame):
 	cd dep && $(UNTAR) "lame-3.100.tar.gz"
 	# Remove nonexistent symbol from symbols list
 	cd dep && $(SED) "s/lame_init_old\n//g" lame-3.100/include/libmp3lame.sym
-	cd dep/lame-3.100 && $(CONFIGURE)
+	cd dep/lame-3.100 && $(CONFIGURE) --enable-nasm --disable-gtktest --disable-decoder --disable-frontend --enable-shared=no
 	cd dep/lame-3.100 && $(MAKE) install
 
 
