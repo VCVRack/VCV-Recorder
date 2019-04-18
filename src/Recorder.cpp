@@ -7,7 +7,6 @@
 extern "C" {
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
-#include <libswresample/swresample.h>
 #include <libswscale/swscale.h>
 }
 
@@ -43,6 +42,7 @@ static const std::map<std::string, FormatInfo> FORMAT_INFO = {
 
 
 struct Encoder {
+	bool initialized = false;
 	bool opened = false;
 
 	AVFormatContext *formatCtx = NULL;
@@ -52,7 +52,6 @@ struct Encoder {
 	AVCodecContext *audioCtx = NULL;
 	AVStream *audioStream = NULL;
 	AVFrame *audioFrame = NULL;
-	struct SwrContext *swr = NULL;
 	int frameIndex = 0;
 
 	AVCodec *videoCodec = NULL;
@@ -69,12 +68,12 @@ struct Encoder {
 		close();
 	}
 
-	bool open(std::string format, std::string path, int channels, int sampleRate, int depth, int bitRate, int width, int height) {
+	void open(std::string format, std::string path, int channels, int sampleRate, int depth, int bitRate, int width, int height) {
 		int err;
 		// This method can only be called once per instance.
-		if (opened)
-			return false;
-		opened = true;
+		if (initialized)
+			return;
+		initialized = true;
 
 		// Create muxer
 		std::string formatName;
@@ -94,7 +93,7 @@ struct Encoder {
 		std::string url = "file:" + path;
 		err = avio_open(&io, url.c_str(), AVIO_FLAG_WRITE);
 		if (err < 0)
-			return false;
+			return;
 		assert(io);
 		formatCtx->pb = io;
 
@@ -161,7 +160,8 @@ struct Encoder {
 
 		// Open audio encoder
 		err = avcodec_open2(audioCtx, audioCodec, NULL);
-		assert(err >= 0);
+		if (err < 0)
+			return;
 
 		// Create audio stream
 		audioStream = avformat_new_stream(formatCtx, NULL);
@@ -186,12 +186,7 @@ struct Encoder {
 		err = av_frame_get_buffer(audioFrame, 0);
 		assert(err >= 0);
 
-		// Create audio resampler
-		swr = swr_alloc();
-		assert(swr);
-
-		swr_alloc_set_opts(swr, audioFrame->channel_layout, audioCtx->sample_fmt, audioFrame->sample_rate, audioFrame->channel_layout, audioCtx->sample_fmt, audioFrame->sample_rate, 0, NULL);
-
+		// Video
 		if (format == "mpeg2") {
 			// Find video encoder
 			videoCodec = avcodec_find_encoder_by_name("mpeg2video");
@@ -201,7 +196,7 @@ struct Encoder {
 			videoCtx = avcodec_alloc_context3(videoCodec);
 			assert(videoCtx);
 
-			videoCtx->bit_rate = 2 * 1000000 * 8;
+			videoCtx->bit_rate = 20 * 1000 * 1000 * 8;
 			videoCtx->width = (width / 2) * 2;
 			videoCtx->height = (height / 2) * 2;
 			videoCtx->gop_size = 10;
@@ -211,6 +206,7 @@ struct Encoder {
 
 			videoCtx->time_base = (AVRational) {videoCtx->framerate.den, videoCtx->framerate.num};
 
+			// Open video encoder
 			err = avcodec_open2(videoCtx, videoCodec, NULL);
 			assert(err >= 0);
 
@@ -276,11 +272,15 @@ struct Encoder {
 		err = avformat_write_header(formatCtx, NULL);
 		assert(err >= 0);
 
-		return true;
+		opened = true;
+	}
+
+	bool isOpen() {
+		return opened;
 	}
 
 	void close() {
-		if (formatCtx) {
+		if (opened) {
 			// Flush a NULL frame to end the stream.
 			flushFrame(audioCtx, audioStream, NULL);
 			if (videoCtx)
@@ -296,8 +296,6 @@ struct Encoder {
 			avcodec_free_context(&audioCtx);
 		audioCodec = NULL;
 		audioStream = NULL;
-		if (swr)
-			swr_free(&swr);
 
 		// Clean up video
 		if (videoFrame)
@@ -531,20 +529,23 @@ struct Recorder : Module {
 
 	void onReset() override {
 		stop();
-		setFormat("wav");
-		setPath("");
+		format = "wav";
+		path = "";
+		directory = "";
+		basename = "";
 		incrementPath = true;
 		channels = 2;
-		setSampleRate(44100);
-		setDepth(16);
-		setBitRate(320000);
-		setSize(0, 0);
+		sampleRate = 44100;
+		depth = 16;
+		bitRate = 320000;
+		width = height = 0;
 	}
 
 	json_t *dataToJson() override {
 		json_t *rootJ = json_object();
 		json_object_set_new(rootJ, "format", json_string(format.c_str()));
 		json_object_set_new(rootJ, "path", json_string(path.c_str()));
+		json_object_set_new(rootJ, "incrementPath", json_boolean(incrementPath));
 		json_object_set_new(rootJ, "sampleRate", json_integer(sampleRate));
 		json_object_set_new(rootJ, "depth", json_integer(depth));
 		json_object_set_new(rootJ, "bitRate", json_integer(bitRate));
@@ -559,6 +560,10 @@ struct Recorder : Module {
 		json_t *pathJ = json_object_get(rootJ, "path");
 		if (pathJ)
 			setPath(json_string_value(pathJ));
+
+		json_t *incrementPathJ = json_object_get(rootJ, "incrementPath");
+		if (incrementPathJ)
+			incrementPath = json_boolean_value(incrementPathJ);
 
 		json_t *sampleRateJ = json_object_get(rootJ, "sampleRate");
 		if (sampleRateJ)
@@ -604,6 +609,7 @@ struct Recorder : Module {
 		in[1] = inputs[RIGHT_INPUT].getVoltage() / 10.f * gain;
 
 		// Process
+		setSampleRate((int) args.sampleRate);
 		{
 			std::lock_guard<std::mutex> lock(encoderMutex);
 			if (encoder)
@@ -650,7 +656,8 @@ struct Recorder : Module {
 		}
 
 		encoder = new Encoder;
-		if (!encoder->open(format, newPath, channels, sampleRate, depth, bitRate, width, height)) {
+		encoder->open(format, newPath, channels, sampleRate, depth, bitRate, width, height);
+		if (!encoder->isOpen()) {
 			delete encoder;
 			encoder = NULL;
 		}
@@ -706,12 +713,16 @@ struct Recorder : Module {
 	// Settings
 
 	void setFormat(std::string format) {
+		if (this->format == format)
+			return;
 		stop();
 		this->format = format;
 		fixPathExtension();
 	}
 
 	void setPath(std::string path) {
+		if (this->path == path)
+			return;
 		stop();
 
 		if (path == "") {
@@ -727,6 +738,8 @@ struct Recorder : Module {
 	}
 
 	void setSampleRate(int sampleRate) {
+		if (this->sampleRate == sampleRate)
+			return;
 		stop();
 		this->sampleRate = sampleRate;
 	}
@@ -736,6 +749,8 @@ struct Recorder : Module {
 	}
 
 	void setDepth(int depth) {
+		if (this->depth == depth)
+			return;
 		stop();
 		this->depth = depth;
 	}
@@ -749,6 +764,8 @@ struct Recorder : Module {
 	}
 
 	void setBitRate(int bitRate) {
+		if (this->bitRate == bitRate)
+			return;
 		stop();
 		this->bitRate = bitRate;
 	}
@@ -1002,11 +1019,11 @@ struct RecorderWidget : ModuleWidget {
 		menu->addChild(new MenuEntry);
 		menu->addChild(createMenuLabel("Settings"));
 
-		SampleRateItem *sampleRateItem = new SampleRateItem;
-		sampleRateItem->text = "Sample rate";
-		sampleRateItem->rightText = RIGHT_ARROW;
-		sampleRateItem->module = module;
-		menu->addChild(sampleRateItem);
+		// SampleRateItem *sampleRateItem = new SampleRateItem;
+		// sampleRateItem->text = "Sample rate";
+		// sampleRateItem->rightText = RIGHT_ARROW;
+		// sampleRateItem->module = module;
+		// menu->addChild(sampleRateItem);
 
 		if (module->showDepth()) {
 			DepthItem *depthItem = new DepthItem;

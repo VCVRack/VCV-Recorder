@@ -26,7 +26,7 @@ lame := dep/lib/libmp3lame.a
 OBJECTS += dep/lib/libavformat.a
 OBJECTS += dep/lib/libavcodec.a
 OBJECTS += dep/lib/libavutil.a
-OBJECTS += dep/lib/libswresample.a
+# OBJECTS += dep/lib/libswresample.a
 OBJECTS += dep/lib/libswscale.a
 OBJECTS += $(lame)
 
