@@ -22,7 +22,27 @@ static void printFfmpegError(int err) {
 }
 
 
+struct FormatInfo {
+	std::string name;
+	std::string extension;
+};
+
+
+static const std::vector<std::string> FORMATS = {"wav", "aiff", "flac", "alac", "mp3", "mpeg2"};
+
+static const std::map<std::string, FormatInfo> FORMAT_INFO = {
+	{"wav", {"WAV (.wav)", "wav"}},
+	{"aiff", {"AIFF (.aif)", "aif"}},
+	{"flac", {"FLAC (.flac)", "flac"}},
+	{"alac", {"ALAC (.m4a)", "m4a"}},
+	{"mp3", {"MP3 (.mp3)", "mp3"}},
+	{"mpeg2", {"MPEG-2 video (.mpg)", "mpg"}},
+};
+
+
 struct Encoder {
+	bool opened = false;
+
 	AVIOContext *io = NULL;
 	AVFormatContext *formatCtx = NULL;
 
@@ -47,137 +67,266 @@ struct Encoder {
 		close();
 	}
 
-	void openWAV(const std::string &path, int channels, int sampleRate, int depth) {
-		close();
-		if (!initIO(path))
-			return;
-		initMuxer("wav");
+	bool open(std::string format, std::string path, int channels, int sampleRate, int depth, int bitRate, int width, int height) {
+		int err;
+		// This method can only be called once per instance.
+		if (opened)
+			return false;
+		opened = true;
 
-		if (depth == 16) {
-			initAudio("pcm_s16le");
+		// Create muxer
+		std::string formatName;
+		if (format == "wav") {
+			formatName = "wav";
+		}
+		else if (format == "aiff") {
+			formatName = "aiff";
+		}
+		else if (format == "flac") {
+			formatName = "flac";
+		}
+		else if (format == "alac") {
+			formatName = "ipod";
+		}
+		else if (format == "mp3") {
+			formatName = "mp3";
+		}
+		else if (format == "mpeg2") {
+			formatName = "mpeg";
+		}
+		else {
+			assert(0);
+		}
+		err = avformat_alloc_output_context2(&formatCtx, NULL, formatName.c_str(), NULL);
+		assert(err >= 0);
+		assert(formatCtx);
+
+		// Create IO
+		std::string url = "file:" + path;
+		err = avio_open(&io, url.c_str(), AVIO_FLAG_WRITE);
+		if (err < 0)
+			return false;
+		assert(io);
+		formatCtx->pb = io;
+
+		// Find audio encoder
+		std::string audioEncoderName;
+		if (format == "wav") {
+			if (depth == 16) {
+				audioEncoderName = "pcm_s16le";
+			}
+			else if (depth == 24) {
+				audioEncoderName = "pcm_s24le";
+			}
+			else {
+				assert(0);
+			}
+		}
+		else if (format == "aiff") {
+			if (depth == 16) {
+				audioEncoderName = "pcm_s16be";
+			}
+			else if (depth == 24) {
+				audioEncoderName = "pcm_s24be";
+			}
+			else {
+				assert(0);
+			}
+		}
+		else if (format == "flac") {
+			audioEncoderName = "flac";
+		}
+		else if (format == "alac") {
+			audioEncoderName = "alac";
+		}
+		else if (format == "mp3") {
+			audioEncoderName = "libmp3lame";
+		}
+		else if (format == "mpeg2") {
+			audioEncoderName = "mp2";
+		}
+		else {
+			assert(0);
+		}
+		audioCodec = avcodec_find_encoder_by_name(audioEncoderName.c_str());
+		assert(audioCodec);
+
+		// Create audio context
+		audioCtx = avcodec_alloc_context3(audioCodec);
+		assert(audioCtx);
+
+		// Set audio channels
+		audioCtx->channels = channels;
+		if (channels == 1) {
+			audioCtx->channel_layout = AV_CH_LAYOUT_MONO;
+		}
+		else if (channels == 2) {
+			audioCtx->channel_layout = AV_CH_LAYOUT_STEREO;
+		}
+		else {
+			assert(0);
+		}
+
+		// Set audio sample format
+		if (format == "wav" || format == "aiff" || format == "flac") {
+			if (depth == 16) {
+				audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+			}
+			else if (depth == 24) {
+				audioCtx->sample_fmt = AV_SAMPLE_FMT_S32;
+			}
+			else {
+				assert(0);
+			}
+		}
+		else if (format == "alac") {
+			if (depth == 16) {
+				audioCtx->sample_fmt = AV_SAMPLE_FMT_S16P;
+			}
+			else if (depth == 24) {
+				audioCtx->sample_fmt = AV_SAMPLE_FMT_S32P;
+			}
+			else {
+				assert(0);
+			}
+		}
+		else if (format == "mp3") {
+			audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+		}
+		else if (format == "mpeg2") {
 			audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 		}
-		else if (depth == 24) {
-			initAudio("pcm_s24le");
-			audioCtx->sample_fmt = AV_SAMPLE_FMT_S32;
-		}
 		else {
 			assert(0);
 		}
 
-		initChannels(channels);
-		initSampleRate(sampleRate);
-		open();
-	}
-
-	void openAIFF(const std::string &path, int channels, int sampleRate, int depth) {
-		close();
-		if (!initIO(path))
-			return;
-		initMuxer("aiff");
-
-		if (depth == 16) {
-			initAudio("pcm_s16be");
-			audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
-		}
-		else if (depth == 24) {
-			initAudio("pcm_s24be");
-			audioCtx->sample_fmt = AV_SAMPLE_FMT_S32;
-		}
-		else {
-			assert(0);
+		// Set bitrate
+		if (format == "mp3" || format == "mpeg2") {
+			audioCtx->bit_rate = bitRate;
 		}
 
-		initChannels(channels);
-		initSampleRate(sampleRate);
-		open();
-	}
+		// Set sample rate
+		audioCtx->sample_rate = sampleRate;
+		audioCtx->time_base = (AVRational) {1, audioCtx->sample_rate};
 
-	void openFLAC(const std::string &path, int channels, int sampleRate, int depth) {
-		close();
-		if (!initIO(path))
-			return;
-		initMuxer("flac");
-		initAudio("flac");
-		initChannels(channels);
-		initSampleRate(sampleRate);
+		// Open audio encoder
+		err = avcodec_open2(audioCtx, audioCodec, NULL);
+		assert(err >= 0);
 
-		if (depth == 16) {
-			audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+		// Create audio stream
+		audioStream = avformat_new_stream(formatCtx, NULL);
+		assert(audioStream);
+
+		err = avcodec_parameters_from_context(audioStream->codecpar, audioCtx);
+		assert(err >= 0);
+
+		// Create audio frame
+		audioFrame = av_frame_alloc();
+		assert(audioFrame);
+
+		audioFrame->pts = 0;
+		audioFrame->format = audioCtx->sample_fmt;
+		audioFrame->channel_layout = audioCtx->channel_layout;
+		audioFrame->sample_rate = audioCtx->sample_rate;
+		audioFrame->nb_samples = audioCtx->frame_size;
+		// PCM doesn't set nb_samples, so use a sane default.
+		if (audioFrame->nb_samples == 0)
+			audioFrame->nb_samples = 16;
+
+		err = av_frame_get_buffer(audioFrame, 0);
+		assert(err >= 0);
+
+		// Create audio resampler
+		swr = swr_alloc();
+		assert(swr);
+
+		swr_alloc_set_opts(swr, audioFrame->channel_layout, audioCtx->sample_fmt, audioFrame->sample_rate, audioFrame->channel_layout, audioCtx->sample_fmt, audioFrame->sample_rate, 0, NULL);
+
+		if (format == "mpeg2") {
+			// Find video encoder
+			videoCodec = avcodec_find_encoder_by_name("mpeg2video");
+			assert(videoCodec);
+
+			// Create video encoder
+			videoCtx = avcodec_alloc_context3(videoCodec);
+			assert(videoCtx);
+
+			videoCtx->bit_rate = 2 * 1000000 * 8;
+			videoCtx->width = (width / 2) * 2;
+			videoCtx->height = (height / 2) * 2;
+			videoCtx->gop_size = 10;
+			videoCtx->pix_fmt = AV_PIX_FMT_YUV420P;
+			videoCtx->framerate = (AVRational) {30, 1};
+			videoCtx->max_b_frames = 2;
+
+			videoCtx->time_base = (AVRational) {videoCtx->framerate.den, videoCtx->framerate.num};
+
+			err = avcodec_open2(videoCtx, videoCodec, NULL);
+			assert(err >= 0);
+
+			// Create video stream
+			videoStream = avformat_new_stream(formatCtx, NULL);
+			assert(videoStream);
+
+			err = avcodec_parameters_from_context(videoStream->codecpar, videoCtx);
+			assert(err >= 0);
+
+			// Create video frame
+			videoFrame = av_frame_alloc();
+			assert(videoFrame);
+
+			videoFrame->pts = 0;
+			videoFrame->format = videoCtx->pix_fmt;
+			videoFrame->width = videoCtx->width;
+			videoFrame->height = videoCtx->height;
+
+			err = av_frame_get_buffer(videoFrame, 0);
+			assert(err >= 0);
+
+			// Create video rescaler
+			// TODO Change this to SWS_POINT if that means nearest-neighbor
+			sws = sws_getContext(videoCtx->width, videoCtx->height, AV_PIX_FMT_RGBA, videoCtx->width, videoCtx->height, videoCtx->pix_fmt, SWS_BILINEAR, NULL, NULL, NULL);
+			assert(sws);
+
+			// Allocate videoData
+			int videoDataSize = videoCtx->width * videoCtx->height * 4;
+			videoData[0] = (uint8_t*) malloc(videoDataSize);
+			videoData[1] = (uint8_t*) malloc(videoDataSize);
+			memset(videoData[0], 0, videoDataSize);
+			memset(videoData[1], 0, videoDataSize);
 		}
-		else if (depth == 24) {
-			audioCtx->sample_fmt = AV_SAMPLE_FMT_S32;
-		}
-		else {
-			assert(0);
-		}
 
-		open();
-	}
+		#if 0
+		// av_dump_format(formatCtx, 0, NULL, true);
 
-	void openALAC(const std::string &path, int channels, int sampleRate, int depth) {
-		close();
-		if (!initIO(path))
-			return;
-		initMuxer("ipod");
-		initAudio("alac");
-		initChannels(channels);
-		initSampleRate(sampleRate);
-
-		if (depth == 16) {
-			audioCtx->sample_fmt = AV_SAMPLE_FMT_S16P;
-		}
-		else if (depth == 24) {
-			audioCtx->sample_fmt = AV_SAMPLE_FMT_S32P;
-		}
-		else {
-			assert(0);
+		// Supported sample rates
+		for (const int *x = audioCodec->supported_samplerates; x && *x != 0; x++) {
+			DEBUG("sample rate: %d", *x);
 		}
 
-		open();
-	}
+		// Supported sample formats
+		for (const enum AVSampleFormat *x = audioCodec->sample_fmts; x && *x != -1; x++) {
+			DEBUG("sample format: %s", av_get_sample_fmt_name(*x));
+		}
 
-	void openMP3(const std::string &path, int channels, int sampleRate, int bitRate) {
-		close();
-		if (!initIO(path))
-			return;
-		initMuxer("mp3");
-		initAudio("libmp3lame");
-		initChannels(channels);
-		initSampleRate(sampleRate);
+		if (videoCodec) {
+			// Supported framerates
+			for (const AVRational *x = videoCodec->supported_framerates; x && x->num != 0; x++) {
+				DEBUG("framerate: %d/%d", x->num, x->den);
+			}
 
-		audioCtx->bit_rate = bitRate;
-		audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+			// Supported pixel formats
+			for (const enum AVPixelFormat *x = videoCodec->pix_fmts; x && *x != -1; x++) {
+				DEBUG("pixel format: %d", *x);
+			}
+		}
+		#endif
 
-		open();
-	}
+		// Write format header to file
+		err = avformat_write_header(formatCtx, NULL);
+		assert(err >= 0);
 
-	void openMPEG2(const std::string &path, int channels, int sampleRate, int bitRate, int width, int height) {
-		close();
-		if (!(width > 0 && height > 0))
-			return;
-		if (!initIO(path))
-			return;
-
-		initMuxer("mpeg");
-		initAudio("mp2");
-		initVideo("mpeg2video");
-		initChannels(channels);
-		initSampleRate(sampleRate);
-
-		audioCtx->bit_rate = bitRate;
-		audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
-
-		// Round down to nearest even size
-		videoCtx->bit_rate = 2 * 1000000 * 8;
-		videoCtx->width = (width / 2) * 2;
-		videoCtx->height = (height / 2) * 2;
-		videoCtx->gop_size = 10;
-		videoCtx->pix_fmt = AV_PIX_FMT_YUV420P;
-		videoCtx->framerate = (AVRational) {30, 1};
-		videoCtx->max_b_frames = 2;
-
-		open();
+		return true;
 	}
 
 	void close() {
@@ -227,10 +376,6 @@ struct Encoder {
 			avformat_free_context(formatCtx);
 			formatCtx = NULL;
 		}
-	}
-
-	bool isOpen() {
-		return formatCtx;
 	}
 
 	/** `input` must be `audioCtx->channels` length and between -1 and 1.
@@ -348,191 +493,6 @@ struct Encoder {
 		return videoCtx->height;
 	}
 
-	// Private methods
-
-	void initMuxer(const std::string &formatName) {
-		int err;
-		assert(!formatCtx);
-		err = avformat_alloc_output_context2(&formatCtx, NULL, formatName.c_str(), NULL);
-		assert(err >= 0);
-		assert(formatCtx);
-		assert(io);
-		formatCtx->pb = io;
-	}
-
-	void initAudio(const std::string &codecName) {
-		assert(!audioCodec);
-		audioCodec = avcodec_find_encoder_by_name(codecName.c_str());
-		assert(audioCodec);
-
-		assert(!audioStream);
-		audioStream = avformat_new_stream(formatCtx, NULL);
-		assert(audioStream);
-
-		assert(!audioCtx);
-		audioCtx = avcodec_alloc_context3(audioCodec);
-		assert(audioCtx);
-
-		assert(!audioFrame);
-		audioFrame = av_frame_alloc();
-		assert(audioFrame);
-
-		assert(!swr);
-		swr = swr_alloc();
-		assert(swr);
-	}
-
-	void initVideo(const std::string &codecName) {
-		assert(!videoCodec);
-		videoCodec = avcodec_find_encoder_by_name(codecName.c_str());
-		assert(videoCodec);
-
-		assert(!videoStream);
-		videoStream = avformat_new_stream(formatCtx, NULL);
-		assert(videoStream);
-
-		assert(!videoCtx);
-		videoCtx = avcodec_alloc_context3(videoCodec);
-		assert(videoCtx);
-
-		assert(!videoFrame);
-		videoFrame = av_frame_alloc();
-		assert(videoFrame);
-	}
-
-	bool initIO(const std::string &path) {
-		int err;
-		assert(!io);
-		std::string url = "file:" + path;
-		err = avio_open(&io, url.c_str(), AVIO_FLAG_WRITE);
-		if (err < 0)
-			return false;
-		assert(io);
-		return true;
-	}
-
-	void initChannels(int channels) {
-		audioCtx->channels = channels;
-		if (channels == 1) {
-			audioCtx->channel_layout = AV_CH_LAYOUT_MONO;
-		}
-		else if (channels == 2) {
-			audioCtx->channel_layout = AV_CH_LAYOUT_STEREO;
-		}
-		else {
-			assert(0);
-		}
-	}
-
-	void initSampleRate(int sampleRate) {
-		audioCtx->sample_rate = sampleRate;
-	}
-
-	void open() {
-		int err;
-		assert(formatCtx && audioCodec && audioCtx && audioStream && audioFrame);
-
-		audioCtx->time_base = (AVRational) {1, audioCtx->sample_rate};
-
-		if (videoCtx) {
-			// Inverse of framerate
-			videoCtx->time_base = (AVRational) {videoCtx->framerate.den, videoCtx->framerate.num};
-		}
-
-#if 0
-		// Supported sample rates
-		for (const int *x = audioCodec->supported_samplerates; x && *x != 0; x++) {
-			DEBUG("sample rate: %d", *x);
-		}
-
-		// Supported sample formats
-		for (const enum AVSampleFormat *x = audioCodec->sample_fmts; x && *x != -1; x++) {
-			DEBUG("sample format: %s", av_get_sample_fmt_name(*x));
-		}
-
-		if (videoCodec) {
-			// Supported framerates
-			for (const AVRational *x = videoCodec->supported_framerates; x && x->num != 0; x++) {
-				DEBUG("framerate: %d/%d", x->num, x->den);
-			}
-
-			// Supported pixel formats
-			for (const enum AVPixelFormat *x = videoCodec->pix_fmts; x && *x != -1; x++) {
-				DEBUG("pixel format: %d", *x);
-			}
-		}
-#endif
-
-		err = avcodec_open2(audioCtx, audioCodec, NULL);
-		assert(err >= 0);
-
-		if (videoCtx) {
-			err = avcodec_open2(videoCtx, videoCodec, NULL);
-			assert(err >= 0);
-		}
-
-		err = avcodec_parameters_from_context(audioStream->codecpar, audioCtx);
-		assert(err >= 0);
-
-		if (videoStream) {
-			err = avcodec_parameters_from_context(videoStream->codecpar, videoCtx);
-			assert(err >= 0);
-		}
-
-		av_dump_format(formatCtx, 0, NULL, true);
-
-		// Set up audio frame
-		audioFrame->pts = 0;
-		audioFrame->format = audioCtx->sample_fmt;
-		audioFrame->channel_layout = audioCtx->channel_layout;
-		audioFrame->sample_rate = audioCtx->sample_rate;
-		audioFrame->nb_samples = audioCtx->frame_size;
-		// PCM doesn't set nb_samples, so use a sane default.
-		if (audioFrame->nb_samples == 0)
-			audioFrame->nb_samples = 16;
-
-		err = av_frame_get_buffer(audioFrame, 0);
-		assert(err >= 0);
-
-		// Set up video frame
-		if (videoFrame) {
-			videoFrame->pts = 0;
-			videoFrame->format = videoCtx->pix_fmt;
-			videoFrame->width = videoCtx->width;
-			videoFrame->height = videoCtx->height;
-
-			err = av_frame_get_buffer(videoFrame, 0);
-			assert(err >= 0);
-		}
-
-		// Set up resampler
-		swr_alloc_set_opts(swr,
-		                   audioFrame->channel_layout, audioCtx->sample_fmt, audioFrame->sample_rate,
-		                   audioFrame->channel_layout, audioCtx->sample_fmt, audioFrame->sample_rate,
-		                   0, NULL);
-
-		// Set up rescaler
-		if (videoCtx) {
-			assert(!sws);
-			// TODO Change this to SWS_POINT if that means nearest-neighbor
-			sws = sws_getContext(videoCtx->width, videoCtx->height, AV_PIX_FMT_RGBA,
-			                     videoCtx->width, videoCtx->height, videoCtx->pix_fmt,
-			                     SWS_BILINEAR, NULL, NULL, NULL);
-			assert(sws);
-
-			// Allocate videoData
-			int videoDataSize = videoCtx->width * videoCtx->height * 4;
-			videoData[0] = (uint8_t*) malloc(videoDataSize);
-			videoData[1] = (uint8_t*) malloc(videoDataSize);
-			memset(videoData[0], 0, videoDataSize);
-			memset(videoData[1], 0, videoDataSize);
-		}
-
-		// Write format header to file
-		err = avformat_write_header(formatCtx, NULL);
-		assert(err >= 0);
-	}
-
 	void flushFrame(AVCodecContext *ctx, AVStream *stream, AVFrame *frame) {
 		int err;
 		assert(formatCtx);
@@ -591,10 +551,10 @@ struct Recorder : Module {
 	dsp::SchmittTrigger trigTrigger;
 	dsp::VuMeter2 vuMeter[2];
 	dsp::ClockDivider lightDivider;
-	Encoder *encoder;
+	Encoder *encoder = NULL;
 	std::mutex encoderMutex;
 
-	// Format settings
+	// Settings. Copied to Encoder when created.
 	std::string format;
 	std::string path;
 	int channels;
@@ -609,17 +569,17 @@ struct Recorder : Module {
 		configParam(REC_PARAM, 0.f, 1.f, 0.f, "Record");
 
 		lightDivider.setDivision(512);
-		encoder = new Encoder;
 		onReset();
 	}
 
 	~Recorder() {
-		delete encoder;
+		stop();
 	}
 
 	void onReset() override {
+		stop();
 		format = "wav";
-		path = "out.wav";
+		path = "";
 		channels = 2;
 		sampleRate = 44100;
 		depth = 16;
@@ -638,32 +598,30 @@ struct Recorder : Module {
 	}
 
 	void dataFromJson(json_t *rootJ) override {
-		stop();
-
 		json_t *formatJ = json_object_get(rootJ, "format");
 		if (formatJ)
-			format = json_string_value(formatJ);
+			setFormat(json_string_value(formatJ));
 
 		json_t *pathJ = json_object_get(rootJ, "path");
 		if (pathJ)
-			path = json_string_value(pathJ);
+			setPath(json_string_value(pathJ));
 
 		json_t *sampleRateJ = json_object_get(rootJ, "sampleRate");
 		if (sampleRateJ)
-			sampleRate = json_integer_value(sampleRateJ);
+			setSampleRate(json_integer_value(sampleRateJ));
 
 		json_t *depthJ = json_object_get(rootJ, "depth");
 		if (depthJ)
-			depth = json_integer_value(depthJ);
+			setDepth(json_integer_value(depthJ));
 
 		json_t *bitRateJ = json_object_get(rootJ, "bitRate");
 		if (bitRateJ)
-			bitRate = json_integer_value(bitRateJ);
+			setBitRate(json_integer_value(bitRateJ));
 	}
 
 	void process(const ProcessArgs &args) override {
 		// Record state
-		bool gate = encoder->isOpen();
+		bool gate = isRecording();
 		bool oldGate = gate;
 		if (recTrigger.process(params[REC_PARAM].getValue())) {
 			gate ^= true;
@@ -683,7 +641,7 @@ struct Recorder : Module {
 		else if (!gate && oldGate) {
 			stop();
 		}
-		gate = encoder->isOpen();
+		gate = isRecording();
 
 		// Input
 		float gain = params[GAIN_PARAM].getValue();
@@ -694,7 +652,8 @@ struct Recorder : Module {
 		// Process
 		{
 			std::lock_guard<std::mutex> lock(encoderMutex);
-			encoder->writeAudio(in);
+			if (encoder)
+				encoder->writeAudio(in);
 		}
 
 		// Lights
@@ -717,29 +676,32 @@ struct Recorder : Module {
 
 	void start() {
 		std::lock_guard<std::mutex> lock(encoderMutex);
-		if (format == "wav")
-			encoder->openWAV(path, channels, sampleRate, depth);
-		else if (format == "aiff")
-			encoder->openAIFF(path, channels, sampleRate, depth);
-		else if (format == "flac")
-			encoder->openFLAC(path, channels, sampleRate, depth);
-		else if (format == "alac")
-			encoder->openALAC(path, channels, sampleRate, depth);
-		else if (format == "mp3")
-			encoder->openMP3(path, channels, sampleRate, bitRate);
-		else if (format == "mpeg2")
-			encoder->openMPEG2(path, channels, sampleRate, bitRate, width, height);
-		else
-			assert(0);
+		if (encoder)
+			delete encoder;
+
+		encoder = new Encoder;
+		if (!encoder->open(format, path, channels, sampleRate, depth, bitRate, width, height)) {
+			delete encoder;
+			encoder = NULL;
+		}
 	}
 
 	void stop() {
 		std::lock_guard<std::mutex> lock(encoderMutex);
-		encoder->close();
+		if (encoder) {
+			delete encoder;
+			encoder = NULL;
+		}
+	}
+
+	bool isRecording() {
+		return !!encoder;
 	}
 
 	void writeVideo(uint8_t *data, int width, int height) {
 		std::lock_guard<std::mutex> lock(encoderMutex);
+		if (!encoder)
+			return;
 		uint8_t *videoData = encoder->getProducerVideoData();
 		if (!videoData)
 			return;
@@ -761,7 +723,16 @@ struct Recorder : Module {
 	}
 
 	bool needsVideo() {
+		if (!encoder)
+			return false;
 		return (encoder->getProducerVideoData() != NULL);
+	}
+
+	void fixPathExtension() {
+		path = string::directory(path)
+			+ "/" + string::basename(string::filename(path))
+			+ "." + FORMAT_INFO.at(format).extension;
+		DEBUG("%s", path.c_str());
 	}
 
 	// Settings
@@ -769,40 +740,23 @@ struct Recorder : Module {
 	void setFormat(std::string format) {
 		if (this->format == format)
 			return;
-		std::lock_guard<std::mutex> lock(encoderMutex);
-		encoder->close();
+		stop();
 		this->format = format;
-	}
-
-	std::vector<std::string> getFormats() {
-		return {"wav", "aiff", "flac", "alac", "mp3", "mpeg2"};
-	}
-
-	std::string getFormatName(std::string format) {
-		static const std::map<std::string, std::string> names = {
-			{"wav", "WAV (.wav)"},
-			{"aiff", "AIFF (.aif)"},
-			{"flac", "FLAC (.flac)"},
-			{"alac", "ALAC (.m4a)"},
-			{"mp3", "MP3 (.mp3)"},
-			{"mpeg2", "MPEG-2 video (.mpg)"},
-		};
-		return names.at(format);
+		fixPathExtension();
 	}
 
 	void setPath(std::string path) {
 		if (this->path == path)
 			return;
-		std::lock_guard<std::mutex> lock(encoderMutex);
-		encoder->close();
+		stop();
 		this->path = path;
+		fixPathExtension();
 	}
 
 	void setSampleRate(int sampleRate) {
 		if (this->sampleRate == sampleRate)
 			return;
-		std::lock_guard<std::mutex> lock(encoderMutex);
-		encoder->close();
+		stop();
 		this->sampleRate = sampleRate;
 	}
 
@@ -813,8 +767,7 @@ struct Recorder : Module {
 	void setDepth(int depth) {
 		if (this->depth == depth)
 			return;
-		std::lock_guard<std::mutex> lock(encoderMutex);
-		encoder->close();
+		stop();
 		this->depth = depth;
 	}
 
@@ -829,8 +782,7 @@ struct Recorder : Module {
 	void setBitRate(int bitRate) {
 		if (this->bitRate == bitRate)
 			return;
-		std::lock_guard<std::mutex> lock(encoderMutex);
-		encoder->close();
+		stop();
 		this->bitRate = bitRate;
 	}
 
@@ -845,7 +797,7 @@ struct Recorder : Module {
 	void setSize(int width, int height) {
 		if (this->width == width && this->height == height)
 			return;
-		// Don't close encoder, just prepare it for next start()
+		// Don't stop recording, just prepare the size for next start.
 		this->width = width;
 		this->height = height;
 	}
@@ -1034,9 +986,10 @@ struct RecorderWidget : ModuleWidget {
 		menu->addChild(new MenuEntry);
 		menu->addChild(createMenuLabel("Format"));
 
-		for (const std::string &format : module->getFormats()) {
+		for (const std::string &format : FORMATS) {
+			const FormatInfo &fi = FORMAT_INFO.at(format);
 			FormatItem *formatItem = new FormatItem;
-			formatItem->text = module->getFormatName(format);
+			formatItem->text = fi.name;
 			formatItem->rightText = CHECKMARK(format == module->format);
 			formatItem->module = module;
 			formatItem->format = format;
