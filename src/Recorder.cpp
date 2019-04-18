@@ -2,6 +2,7 @@
 #include "osdialog.h"
 #include <mutex>
 #include <regex>
+#include <atomic>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -44,8 +45,8 @@ static const std::map<std::string, FormatInfo> FORMAT_INFO = {
 struct Encoder {
 	bool opened = false;
 
-	AVIOContext *io = NULL;
 	AVFormatContext *formatCtx = NULL;
+	AVIOContext *io = NULL;
 
 	AVCodec *audioCodec = NULL;
 	AVCodecContext *audioCtx = NULL;
@@ -62,7 +63,7 @@ struct Encoder {
 
 	// Double buffer of RGBA8888 video data
 	uint8_t *videoData[2] = {};
-	bool videoDataFlipped = false;
+	std::atomic<int> videoDataFlipped{0};
 
 	~Encoder() {
 		close();
@@ -77,27 +78,14 @@ struct Encoder {
 
 		// Create muxer
 		std::string formatName;
-		if (format == "wav") {
-			formatName = "wav";
-		}
-		else if (format == "aiff") {
-			formatName = "aiff";
-		}
-		else if (format == "flac") {
-			formatName = "flac";
-		}
-		else if (format == "alac") {
-			formatName = "ipod";
-		}
-		else if (format == "mp3") {
-			formatName = "mp3";
-		}
-		else if (format == "mpeg2") {
-			formatName = "mpeg";
-		}
-		else {
-			assert(0);
-		}
+		if (format == "wav") formatName = "wav";
+		else if (format == "aiff") formatName = "aiff";
+		else if (format == "flac") formatName = "flac";
+		else if (format == "alac") formatName = "ipod";
+		else if (format == "mp3") formatName = "mp3";
+		else if (format == "mpeg2") formatName = "mpeg";
+		else assert(0);
+
 		err = avformat_alloc_output_context2(&formatCtx, NULL, formatName.c_str(), NULL);
 		assert(err >= 0);
 		assert(formatCtx);
@@ -113,42 +101,21 @@ struct Encoder {
 		// Find audio encoder
 		std::string audioEncoderName;
 		if (format == "wav") {
-			if (depth == 16) {
-				audioEncoderName = "pcm_s16le";
-			}
-			else if (depth == 24) {
-				audioEncoderName = "pcm_s24le";
-			}
-			else {
-				assert(0);
-			}
+			if (depth == 16) audioEncoderName = "pcm_s16le";
+			else if (depth == 24) audioEncoderName = "pcm_s24le";
+			else assert(0);
 		}
 		else if (format == "aiff") {
-			if (depth == 16) {
-				audioEncoderName = "pcm_s16be";
-			}
-			else if (depth == 24) {
-				audioEncoderName = "pcm_s24be";
-			}
-			else {
-				assert(0);
-			}
+			if (depth == 16) audioEncoderName = "pcm_s16be";
+			else if (depth == 24) audioEncoderName = "pcm_s24be";
+			else assert(0);
 		}
-		else if (format == "flac") {
-			audioEncoderName = "flac";
-		}
-		else if (format == "alac") {
-			audioEncoderName = "alac";
-		}
-		else if (format == "mp3") {
-			audioEncoderName = "libmp3lame";
-		}
-		else if (format == "mpeg2") {
-			audioEncoderName = "mp2";
-		}
-		else {
-			assert(0);
-		}
+		else if (format == "flac") audioEncoderName = "flac";
+		else if (format == "alac") audioEncoderName = "alac";
+		else if (format == "mp3") audioEncoderName = "libmp3lame";
+		else if (format == "mpeg2") audioEncoderName = "mp2";
+		else assert(0);
+
 		audioCodec = avcodec_find_encoder_by_name(audioEncoderName.c_str());
 		assert(audioCodec);
 
@@ -170,36 +137,18 @@ struct Encoder {
 
 		// Set audio sample format
 		if (format == "wav" || format == "aiff" || format == "flac") {
-			if (depth == 16) {
-				audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
-			}
-			else if (depth == 24) {
-				audioCtx->sample_fmt = AV_SAMPLE_FMT_S32;
-			}
-			else {
-				assert(0);
-			}
+			if (depth == 16) audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+			else if (depth == 24) audioCtx->sample_fmt = AV_SAMPLE_FMT_S32;
+			else assert(0);
 		}
 		else if (format == "alac") {
-			if (depth == 16) {
-				audioCtx->sample_fmt = AV_SAMPLE_FMT_S16P;
-			}
-			else if (depth == 24) {
-				audioCtx->sample_fmt = AV_SAMPLE_FMT_S32P;
-			}
-			else {
-				assert(0);
-			}
+			if (depth == 16) audioCtx->sample_fmt = AV_SAMPLE_FMT_S16P;
+			else if (depth == 24) audioCtx->sample_fmt = AV_SAMPLE_FMT_S32P;
+			else assert(0);
 		}
-		else if (format == "mp3") {
-			audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
-		}
-		else if (format == "mpeg2") {
-			audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
-		}
-		else {
-			assert(0);
-		}
+		else if (format == "mp3") audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+		else if (format == "mpeg2") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+		else assert(0);
 
 		// Set bitrate
 		if (format == "mp3" || format == "mpeg2") {
@@ -560,6 +509,7 @@ struct Recorder : Module {
 	std::string path;
 	std::string directory;
 	std::string basename;
+	bool incrementPath;
 	int channels;
 	int sampleRate;
 	int depth;
@@ -581,13 +531,14 @@ struct Recorder : Module {
 
 	void onReset() override {
 		stop();
-		format = "wav";
-		path = "";
+		setFormat("wav");
+		setPath("");
+		incrementPath = true;
 		channels = 2;
-		sampleRate = 44100;
-		depth = 16;
-		bitRate = 320000;
-		width = height = 0;
+		setSampleRate(44100);
+		setDepth(16);
+		setBitRate(320000);
+		setSize(0, 0);
 	}
 
 	json_t *dataToJson() override {
@@ -684,16 +635,18 @@ struct Recorder : Module {
 		if (path == "")
 			return;
 
-		std::string newPath;
-		std::string extension = FORMAT_INFO.at(format).extension;
-		for (int i = 0; i <= 999; i++) {
-			newPath = directory + "/" + basename;
-			if (i > 0)
-				newPath += string::f("-%03d", i);
-			newPath += "." + extension;
-			// Skip if file exists
-			if (!system::isFile(newPath))
-				break;
+		std::string newPath = path;
+		if (incrementPath) {
+			std::string extension = FORMAT_INFO.at(format).extension;
+			for (int i = 0; i <= 999; i++) {
+				newPath = directory + "/" + basename;
+				if (i > 0)
+					newPath += string::f("-%03d", i);
+				newPath += "." + extension;
+				// Skip if file exists
+				if (!system::isFile(newPath))
+					break;
+			}
 		}
 
 		encoder = new Encoder;
@@ -881,6 +834,14 @@ struct PathItem : MenuItem {
 };
 
 
+struct IncrementPathItem : MenuItem {
+	Recorder *module;
+	void onAction(const widget::ActionEvent &e) override {
+		module->incrementPath ^= true;
+	}
+};
+
+
 struct FormatItem : MenuItem {
 	Recorder *module;
 	std::string format;
@@ -1018,6 +979,12 @@ struct RecorderWidget : ModuleWidget {
 		pathItem->text = (path != "") ? path : "Select";
 		pathItem->module = module;
 		menu->addChild(pathItem);
+
+		IncrementPathItem *incrementPathItem = new IncrementPathItem;
+		incrementPathItem->text = "Overwrite existing file";
+		incrementPathItem->rightText = CHECKMARK(!module->incrementPath);
+		incrementPathItem->module = module;
+		menu->addChild(incrementPathItem);
 
 		menu->addChild(new MenuEntry);
 		menu->addChild(createMenuLabel("Format"));
