@@ -1,6 +1,7 @@
 #include "plugin.hpp"
 #include "osdialog.h"
 #include <mutex>
+#include <regex>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -557,6 +558,8 @@ struct Recorder : Module {
 	// Settings. Copied to Encoder when created.
 	std::string format;
 	std::string path;
+	std::string directory;
+	std::string basename;
 	int channels;
 	int sampleRate;
 	int depth;
@@ -675,12 +678,26 @@ struct Recorder : Module {
 	}
 
 	void start() {
+		stop();
 		std::lock_guard<std::mutex> lock(encoderMutex);
-		if (encoder)
-			delete encoder;
+
+		if (path == "")
+			return;
+
+		std::string newPath;
+		std::string extension = FORMAT_INFO.at(format).extension;
+		for (int i = 0; i <= 999; i++) {
+			newPath = directory + "/" + basename;
+			if (i > 0)
+				newPath += string::f("-%03d", i);
+			newPath += "." + extension;
+			// Skip if file exists
+			if (!system::isFile(newPath))
+				break;
+		}
 
 		encoder = new Encoder;
-		if (!encoder->open(format, path, channels, sampleRate, depth, bitRate, width, height)) {
+		if (!encoder->open(format, newPath, channels, sampleRate, depth, bitRate, width, height)) {
 			delete encoder;
 			encoder = NULL;
 		}
@@ -729,33 +746,34 @@ struct Recorder : Module {
 	}
 
 	void fixPathExtension() {
-		path = string::directory(path)
-			+ "/" + string::basename(string::filename(path))
-			+ "." + FORMAT_INFO.at(format).extension;
-		DEBUG("%s", path.c_str());
+		std::string extension = FORMAT_INFO.at(format).extension;
+		path = directory + "/" + basename + "." + extension;
 	}
 
 	// Settings
 
 	void setFormat(std::string format) {
-		if (this->format == format)
-			return;
 		stop();
 		this->format = format;
 		fixPathExtension();
 	}
 
 	void setPath(std::string path) {
-		if (this->path == path)
-			return;
 		stop();
-		this->path = path;
+
+		if (path == "") {
+			directory = "";
+			basename = "";
+			return;
+		}
+
+		directory = string::directory(path);
+		std::string filename = string::filename(path);
+		basename = string::basename(filename);
 		fixPathExtension();
 	}
 
 	void setSampleRate(int sampleRate) {
-		if (this->sampleRate == sampleRate)
-			return;
 		stop();
 		this->sampleRate = sampleRate;
 	}
@@ -765,8 +783,6 @@ struct Recorder : Module {
 	}
 
 	void setDepth(int depth) {
-		if (this->depth == depth)
-			return;
 		stop();
 		this->depth = depth;
 	}
@@ -780,8 +796,6 @@ struct Recorder : Module {
 	}
 
 	void setBitRate(int bitRate) {
-		if (this->bitRate == bitRate)
-			return;
 		stop();
 		this->bitRate = bitRate;
 	}
@@ -809,6 +823,25 @@ struct Recorder : Module {
 ////////////////////
 
 
+static void selectPath(Recorder *module) {
+	std::string dir;
+	std::string filename;
+	if (module->path != "") {
+		dir = string::directory(module->path);
+		filename = string::filename(module->path);
+	}
+	else {
+		dir = asset::user("");
+		filename = "Untitled";
+	}
+
+	char *path = osdialog_file(OSDIALOG_SAVE, dir.c_str(), filename.c_str(), NULL);
+	if (path) {
+		module->setPath(path);
+		free(path);
+	}
+}
+
 struct BlackKnob : RoundKnob {
 	BlackKnob() {
 		setSvg(APP->window->loadSvg(asset::plugin(pluginInstance, "res/BlackKnob.svg")));
@@ -820,6 +853,14 @@ struct RecButton : SvgSwitch {
 	RecButton() {
 		momentary = true;
 		addFrame(APP->window->loadSvg(asset::plugin(pluginInstance, "res/RecButton.svg")));
+	}
+
+	void onDragStart(const widget::DragStartEvent &e) override {
+		Recorder *module = dynamic_cast<Recorder*>(paramQuantity->module);
+		if (module && module->path == "")
+			selectPath(module);
+
+		SvgSwitch::onDragStart(e);
 	}
 };
 
@@ -835,12 +876,7 @@ struct RecLight : RedLight {
 struct PathItem : MenuItem {
 	Recorder *module;
 	void onAction(const widget::ActionEvent &e) override {
-		std::string dir = asset::user("");
-		char *path = osdialog_file(OSDIALOG_SAVE, dir.c_str(), "Untitled", NULL);
-		if (path) {
-			module->setPath(path);
-			free(path);
-		}
+		selectPath(module);
 	}
 };
 
@@ -975,13 +1011,13 @@ struct RecorderWidget : ModuleWidget {
 
 		menu->addChild(new MenuEntry);
 
+		menu->addChild(createMenuLabel("Output file"));
+
 		PathItem *pathItem = new PathItem;
-		pathItem->text = "Select output file";
+		std::string path = string::ellipsizePrefix(module->path, 30);
+		pathItem->text = (path != "") ? path : "Select";
 		pathItem->module = module;
 		menu->addChild(pathItem);
-
-		std::string path = string::ellipsizePrefix(module->path, 25);
-		menu->addChild(createMenuLabel(path));
 
 		menu->addChild(new MenuEntry);
 		menu->addChild(createMenuLabel("Format"));
