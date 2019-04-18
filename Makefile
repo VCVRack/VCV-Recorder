@@ -1,10 +1,15 @@
 RACK_DIR ?= ../..
 
+include $(RACK_DIR)/arch.mk
+
 FLAGS += -Idep/include
 CFLAGS +=
 CXXFLAGS +=
 ifdef ARCH_LIN
 	# No idea what this does. Recommended by https://ffmpeg.org/platform.html#Advanced-linking-configuration
+	LDFLAGS += -Wl,-Bsymbolic
+endif
+ifdef ARCH_MAC
 	LDFLAGS += -Wl,-Bsymbolic
 endif
 
