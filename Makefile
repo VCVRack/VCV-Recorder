@@ -1,10 +1,12 @@
 RACK_DIR ?= ../..
 
-FLAGS +=
+FLAGS += -Idep/include
 CFLAGS +=
 CXXFLAGS +=
-# No idea what this does. Recommended by https://ffmpeg.org/platform.html#Advanced-linking-configuration
-LDFLAGS += -Wl,-Bsymbolic
+ifdef ARCH_LIN
+	# No idea what this does. Recommended by https://ffmpeg.org/platform.html#Advanced-linking-configuration
+	LDFLAGS += -Wl,-Bsymbolic
+endif
 
 SOURCES += $(wildcard src/*.cpp)
 
@@ -40,10 +42,13 @@ $(ffmpeg): $(lame)
 	cd dep/ffmpeg && $(MAKE) install
 
 $(lame):
-	cd dep && $(WGET) "https://sourceforge.net/projects/lame/files/lame/3.100/lame-3.100.tar.gz"
+	# Use -nc because Sourceforce mirrors don't understand -c if the file already exists
+	cd dep && $(WGET) -nc "https://sourceforge.net/projects/lame/files/lame/3.100/lame-3.100.tar.gz"
 	cd dep && $(SHA256) lame-3.100.tar.gz ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e
 	cd dep && $(UNTAR) "lame-3.100.tar.gz"
-	cd dep/lame-3.100 && $(CONFIGURE)
+	# Remove nonexistent symbol from symbols list
+	cd dep && $(SED) "s/lame_init_old\n//g" lame-3.100/include/libmp3lame.sym
+	cd dep/lame-3.100 && $(CONFIGURE) --enable-nasm --disable-gtktest --disable-decoder --disable-frontend --enable-shared=no
 	cd dep/lame-3.100 && $(MAKE) install
 
 
