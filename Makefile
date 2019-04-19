@@ -9,9 +9,6 @@ ifdef ARCH_LIN
 	# No idea what this does. Recommended by https://ffmpeg.org/platform.html#Advanced-linking-configuration
 	LDFLAGS += -Wl,-Bsymbolic
 endif
-ifdef ARCH_MAC
-	LDFLAGS += -Wl,-Bsymbolic
-endif
 
 SOURCES += $(wildcard src/*.cpp)
 
@@ -39,6 +36,9 @@ FFMPEG_FORMATS += --enable-libmp3lame --enable-muxer=mp3 --enable-encoder=libmp3
 FFMPEG_FORMATS += --enable-muxer=flac --enable-encoder=flac
 FFMPEG_FORMATS += --enable-muxer=ipod --enable-encoder=alac
 FFMPEG_FORMATS += --enable-muxer=mpeg1system --enable-encoder=mpeg2video --enable-encoder=mp2
+ifdef ARCH_MAC
+# 	FFMPEG_FORMATS += --enable-videotoolbox --enable-muxer=mp4 --enable-encoder=h264_videotoolbox --enable-encoder=mp2
+endif
 
 $(ffmpeg): $(lame)
 	cd dep/ffmpeg && $(CONFIGURE) --enable-pic --enable-gpl \

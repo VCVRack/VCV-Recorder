@@ -32,12 +32,13 @@ struct FormatInfo {
 static const std::vector<std::string> FORMATS = {"wav", "aiff", "flac", "alac", "mp3", "mpeg2"};
 
 static const std::map<std::string, FormatInfo> FORMAT_INFO = {
-	{"wav", {"WAV (.wav)", "wav"}},
-	{"aiff", {"AIFF (.aif)", "aif"}},
-	{"flac", {"FLAC (.flac)", "flac"}},
-	{"alac", {"ALAC (.m4a)", "m4a"}},
-	{"mp3", {"MP3 (.mp3)", "mp3"}},
-	{"mpeg2", {"MPEG-2 video (.mpg)", "mpg"}},
+	{"wav", {"WAV", "wav"}},
+	{"aiff", {"AIFF", "aif"}},
+	{"flac", {"FLAC)", "flac"}},
+	{"alac", {"ALAC", "m4a"}},
+	{"mp3", {"MP3", "mp3"}},
+	{"mpeg2", {"MPEG-2 video", "mpg"}},
+	{"h264", {"H.264", "mp4"}},
 };
 
 
@@ -71,8 +72,7 @@ struct Encoder {
 	void open(std::string format, std::string path, int channels, int sampleRate, int depth, int bitRate, int width, int height) {
 		int err;
 		// This method can only be called once per instance.
-		if (initialized)
-			return;
+		assert(!initialized);
 		initialized = true;
 
 		// Create muxer
@@ -83,17 +83,20 @@ struct Encoder {
 		else if (format == "alac") formatName = "ipod";
 		else if (format == "mp3") formatName = "mp3";
 		else if (format == "mpeg2") formatName = "mpeg";
+		else if (format == "h264") formatName = "mp4";
 		else assert(0);
 
-		err = avformat_alloc_output_context2(&formatCtx, NULL, formatName.c_str(), NULL);
+		err = avformat_alloc_output_context2(&formatCtx, NULL, formatName.c_str(), path.c_str());
 		assert(err >= 0);
 		assert(formatCtx);
 
 		// Create IO
 		std::string url = "file:" + path;
 		err = avio_open(&io, url.c_str(), AVIO_FLAG_WRITE);
-		if (err < 0)
+		if (err < 0) {
+			printFfmpegError(err);
 			return;
+		}
 		assert(io);
 		formatCtx->pb = io;
 
@@ -112,7 +115,7 @@ struct Encoder {
 		else if (format == "flac") audioEncoderName = "flac";
 		else if (format == "alac") audioEncoderName = "alac";
 		else if (format == "mp3") audioEncoderName = "libmp3lame";
-		else if (format == "mpeg2") audioEncoderName = "mp2";
+		else if (format == "mpeg2" || format == "h264") audioEncoderName = "mp2";
 		else assert(0);
 
 		audioCodec = avcodec_find_encoder_by_name(audioEncoderName.c_str());
@@ -146,11 +149,11 @@ struct Encoder {
 			else assert(0);
 		}
 		else if (format == "mp3") audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
-		else if (format == "mpeg2") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+		else if (format == "mpeg2" || format == "h264") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 		else assert(0);
 
 		// Set bitrate
-		if (format == "mp3" || format == "mpeg2") {
+		if (format == "mp3" || format == "mpeg2" || format == "h264") {
 			audioCtx->bit_rate = bitRate;
 		}
 
@@ -160,8 +163,10 @@ struct Encoder {
 
 		// Open audio encoder
 		err = avcodec_open2(audioCtx, audioCodec, NULL);
-		if (err < 0)
+		if (err < 0) {
+			printFfmpegError(err);
 			return;
+		}
 
 		// Create audio stream
 		audioStream = avformat_new_stream(formatCtx, NULL);
@@ -187,9 +192,14 @@ struct Encoder {
 		assert(err >= 0);
 
 		// Video
-		if (format == "mpeg2") {
+		if (format == "mpeg2" || format == "h264") {
 			// Find video encoder
-			videoCodec = avcodec_find_encoder_by_name("mpeg2video");
+			std::string videoEncoderName;
+			if (format == "mpeg2") videoEncoderName = "mpeg2video";
+			else if (format == "h264") videoEncoderName = "h264";
+			else assert(0);
+
+			videoCodec = avcodec_find_encoder_by_name(videoEncoderName.c_str());
 			assert(videoCodec);
 
 			// Create video encoder
@@ -732,8 +742,7 @@ struct Recorder : Module {
 		}
 
 		directory = string::directory(path);
-		std::string filename = string::filename(path);
-		basename = string::basename(filename);
+		basename = string::filenameBase(string::filename(path));
 		fixPathExtension();
 	}
 
@@ -1009,7 +1018,7 @@ struct RecorderWidget : ModuleWidget {
 		for (const std::string &format : FORMATS) {
 			const FormatInfo &fi = FORMAT_INFO.at(format);
 			FormatItem *formatItem = new FormatItem;
-			formatItem->text = fi.name;
+			formatItem->text = fi.name + " (." + fi.extension + ")";
 			formatItem->rightText = CHECKMARK(format == module->format);
 			formatItem->module = module;
 			formatItem->format = format;
