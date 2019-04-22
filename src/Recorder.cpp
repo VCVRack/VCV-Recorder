@@ -834,7 +834,7 @@ struct RecButton : SvgSwitch {
 		addFrame(APP->window->loadSvg(asset::plugin(pluginInstance, "res/RecButton.svg")));
 	}
 
-	void onDragStart(const widget::DragStartEvent &e) override {
+	void onDragStart(const event::DragStart &e) override {
 		Recorder *module = dynamic_cast<Recorder*>(paramQuantity->module);
 		if (module && module->path == "")
 			selectPath(module);
@@ -854,7 +854,7 @@ struct RecLight : RedLight {
 
 struct PathItem : MenuItem {
 	Recorder *module;
-	void onAction(const widget::ActionEvent &e) override {
+	void onAction(const event::Action &e) override {
 		selectPath(module);
 	}
 };
@@ -862,7 +862,7 @@ struct PathItem : MenuItem {
 
 struct IncrementPathItem : MenuItem {
 	Recorder *module;
-	void onAction(const widget::ActionEvent &e) override {
+	void onAction(const event::Action &e) override {
 		module->incrementPath ^= true;
 	}
 };
@@ -871,7 +871,7 @@ struct IncrementPathItem : MenuItem {
 struct FormatItem : MenuItem {
 	Recorder *module;
 	std::string format;
-	void onAction(const widget::ActionEvent &e) override {
+	void onAction(const event::Action &e) override {
 		module->setFormat(format);
 	}
 };
@@ -880,7 +880,7 @@ struct FormatItem : MenuItem {
 struct SampleRateValueItem : MenuItem {
 	Recorder *module;
 	int sampleRate;
-	void onAction(const widget::ActionEvent &e) override {
+	void onAction(const event::Action &e) override {
 		module->setSampleRate(sampleRate);
 	}
 };
@@ -906,7 +906,7 @@ struct SampleRateItem : MenuItem {
 struct DepthValueItem : MenuItem {
 	Recorder *module;
 	int depth;
-	void onAction(const widget::ActionEvent &e) override {
+	void onAction(const event::Action &e) override {
 		module->setDepth(depth);
 	}
 };
@@ -932,7 +932,7 @@ struct DepthItem : MenuItem {
 struct BitRateValueItem : MenuItem {
 	Recorder *module;
 	int bitRate;
-	void onAction(const widget::ActionEvent &e) override {
+	void onAction(const event::Action &e) override {
 		module->setBitRate(bitRate);
 	}
 };
