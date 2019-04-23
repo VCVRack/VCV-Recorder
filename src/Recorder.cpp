@@ -716,6 +716,10 @@ struct Recorder : Module {
 	}
 
 	void fixPathExtension() {
+		if (basename == "") {
+			path = "";
+			return;
+		}
 		std::string extension = FORMAT_INFO.at(format).extension;
 		path = directory + "/" + basename + "." + extension;
 	}
@@ -736,6 +740,7 @@ struct Recorder : Module {
 		stop();
 
 		if (path == "") {
+			this->path = "";
 			directory = "";
 			basename = "";
 			return;
