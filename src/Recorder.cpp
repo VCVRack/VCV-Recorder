@@ -29,12 +29,13 @@ struct FormatInfo {
 };
 
 
-static const std::vector<std::string> FORMATS = {"wav", "aiff", "flac", "alac", "mp3", "mpeg2"};
+static const std::vector<std::string> AUDIO_FORMATS = {"wav", "aiff", "flac", "alac", "mp3"};
+static const std::vector<std::string> VIDEO_FORMATS = {"mpeg2"};
 
 static const std::map<std::string, FormatInfo> FORMAT_INFO = {
 	{"wav", {"WAV", "wav"}},
 	{"aiff", {"AIFF", "aif"}},
-	{"flac", {"FLAC)", "flac"}},
+	{"flac", {"FLAC", "flac"}},
 	{"alac", {"ALAC", "m4a"}},
 	{"mp3", {"MP3", "mp3"}},
 	{"mpeg2", {"MPEG-2 video", "mpg"}},
@@ -63,7 +64,7 @@ struct Encoder {
 
 	// Double buffer of RGBA8888 video data
 	uint8_t *videoData[2] = {};
-	std::atomic<int> videoDataFlipped{0};
+	std::atomic<int> videoDataIndex{0};
 
 	~Encoder() {
 		close();
@@ -252,9 +253,9 @@ struct Encoder {
 			memset(videoData[1], 0, videoDataSize);
 		}
 
-		#if 0
-		// av_dump_format(formatCtx, 0, NULL, true);
+		av_dump_format(formatCtx, 0, url.c_str(), true);
 
+		#if 0
 		// Supported sample rates
 		for (const int *x = audioCodec->supported_samplerates; x && *x != 0; x++) {
 			DEBUG("sample rate: %d", *x);
@@ -425,18 +426,18 @@ struct Encoder {
 		flushFrame(videoCtx, videoStream, videoFrame);
 
 		// Flip double buffer
-		videoDataFlipped ^= 1;
+		videoDataIndex ^= 1;
 
 		// Advance frame
 		videoFrame->pts++;
 	}
 
 	uint8_t *getProducerVideoData() {
-		return videoData[videoDataFlipped];
+		return videoData[videoDataIndex];
 	}
 
 	uint8_t *getConsumerVideoData() {
-		return videoData[!videoDataFlipped];
+		return videoData[!videoDataIndex];
 	}
 
 	int getVideoWidth() {
@@ -1018,9 +1019,22 @@ struct RecorderWidget : ModuleWidget {
 		menu->addChild(incrementPathItem);
 
 		menu->addChild(new MenuEntry);
-		menu->addChild(createMenuLabel("Format"));
+		menu->addChild(createMenuLabel("Audio"));
 
-		for (const std::string &format : FORMATS) {
+		for (const std::string &format : AUDIO_FORMATS) {
+			const FormatInfo &fi = FORMAT_INFO.at(format);
+			FormatItem *formatItem = new FormatItem;
+			formatItem->text = fi.name + " (." + fi.extension + ")";
+			formatItem->rightText = CHECKMARK(format == module->format);
+			formatItem->module = module;
+			formatItem->format = format;
+			menu->addChild(formatItem);
+		}
+
+		menu->addChild(new MenuEntry);
+		menu->addChild(createMenuLabel("Video (experimental)"));
+
+		for (const std::string &format : VIDEO_FORMATS) {
 			const FormatInfo &fi = FORMAT_INFO.at(format);
 			FormatItem *formatItem = new FormatItem;
 			formatItem->text = fi.name + " (." + fi.extension + ")";
