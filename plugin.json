@@ -1,12 +1,13 @@
 {
 	"slug": "VCV-Recorder",
-	"name": "Recorder",
-	"author": "VCV",
 	"license": "BSD-3-Clause",
+	"version": "1.0.0",
+	"name": "Recorder",
+	"brand": "VCV",
+	"author": "VCV",
 	"authorEmail": "contact@vcvrack.com",
 	"authorUrl": "https://vcvrack.com/",
 	"sourceUrl": "https://github.com/VCVRack/VCV-Recorder",
-	"version": "1.0.0",
 	"modules": [
 		{
 			"slug": "Recorder",

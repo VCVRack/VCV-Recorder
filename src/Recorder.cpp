@@ -1008,7 +1008,7 @@ struct RecorderWidget : ModuleWidget {
 
 		PathItem *pathItem = new PathItem;
 		std::string path = string::ellipsizePrefix(module->path, 30);
-		pathItem->text = (path != "") ? path : "Select";
+		pathItem->text = (path != "") ? path : "Select...";
 		pathItem->module = module;
 		menu->addChild(pathItem);
 
@@ -1045,7 +1045,7 @@ struct RecorderWidget : ModuleWidget {
 		}
 
 		menu->addChild(new MenuEntry);
-		menu->addChild(createMenuLabel("Settings"));
+		menu->addChild(createMenuLabel("Encoder settings"));
 
 		// SampleRateItem *sampleRateItem = new SampleRateItem;
 		// sampleRateItem->text = "Sample rate";
