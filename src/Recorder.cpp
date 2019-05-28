@@ -3,6 +3,7 @@
 #include <mutex>
 #include <regex>
 #include <atomic>
+#include <stb_image.h>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -20,6 +21,27 @@ static void printFfmpegError(int err) {
 	char str[AV_ERROR_MAX_STRING_SIZE];
 	av_strerror(err, str, sizeof(str));
 	DEBUG("ffmpeg error: %s", str);
+}
+
+
+static void blitRGBA(uint8_t *dst, int dstWidth, int dstHeight, int dstStride, const uint8_t *src, int srcWidth, int srcHeight, int srcStride, int x, int y) {
+	for (int srcY = 0; srcY < srcHeight; srcY++) {
+		int dstY = y + srcY;
+		if (0 <= dstY && dstY < dstHeight)
+		for (int srcX = 0; srcX < srcWidth; srcX++) {
+			int dstX = x + srcX;
+			if (0 <= dstX && dstX < dstWidth) {
+				float srcAlpha = (float) src[srcY * srcStride + srcX * 4 + 3] / 255;
+				for (int c = 0; c < 3; c++) {
+					float dstC = (float) dst[dstY * dstStride + dstX * 4 + c] / 255;
+					float srcC = (float) src[srcY * srcStride + srcX * 4 + c] / 255;
+					// Assume destination alpha is 255 to make the composition algorithm trivial.
+					dstC = dstC * (1.f - srcAlpha) + srcC * srcAlpha;
+					dst[dstY * dstStride + dstX * 4 + c] = 255 * clamp(dstC, 0.f, 1.f);
+				}
+			}
+		}
+	}
 }
 
 
@@ -208,6 +230,7 @@ struct Encoder {
 			assert(videoCtx);
 
 			videoCtx->bit_rate = 20 * 1000 * 1000 * 8;
+			// Round down to nearest even number
 			videoCtx->width = (width / 2) * 2;
 			videoCtx->height = (height / 2) * 2;
 			videoCtx->gop_size = 10;
@@ -969,6 +992,9 @@ struct BitRateItem : MenuItem {
 
 
 struct RecorderWidget : ModuleWidget {
+	uint8_t *cursor = NULL;
+	int cursorWidth, cursorHeight, cursorComp;
+
 	RecorderWidget(Recorder *module) {
 		setModule(module);
 		setPanel(APP->window->loadSvg(asset::plugin(pluginInstance, "res/Recorder.svg")));
@@ -999,6 +1025,23 @@ struct RecorderWidget : ModuleWidget {
 		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(6.7, 60.384)), module, Recorder::VU_LIGHTS + 0 * 6 + 5));
 		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(18.7, 60.384)), module, Recorder::VU_LIGHTS + 1 * 6 + 5));
 		addChild(createLightCentered<RecLight>(mm2px(Vec(12.699, 73.624)), module, Recorder::REC_LIGHT));
+
+		// Load cursor
+		stbi_set_unpremultiply_on_load(1);
+		stbi_convert_iphone_png_to_rgb(1);
+		stbi_set_flip_vertically_on_load(1);
+		cursor = stbi_load(asset::plugin(pluginInstance, "res/cursor.png").c_str(), &cursorWidth, &cursorHeight, &cursorComp, STBI_rgb_alpha);
+		stbi_set_unpremultiply_on_load(0);
+		stbi_convert_iphone_png_to_rgb(0);
+		stbi_set_flip_vertically_on_load(0);
+		if (!cursor) {
+			WARN("Could not load cursor image");
+		}
+	}
+
+	~RecorderWidget() {
+		if (cursor)
+			free(cursor);
 	}
 
 	void appendContextMenu(Menu *menu) override {
@@ -1078,6 +1121,7 @@ struct RecorderWidget : ModuleWidget {
 			return;
 		Recorder *module = dynamic_cast<Recorder*>(this->module);
 
+		// Get size even if video is not requested, so the size can be set when video starts recording.
 		int width, height;
 		glfwGetFramebufferSize(APP->window->win, &width, &height);
 		module->setSize(width, height);
@@ -1085,8 +1129,24 @@ struct RecorderWidget : ModuleWidget {
 		if (module->needsVideo()) {
 			// glReadPixels defaults to GL_BACK, but the back-buffer is unstable, so use the front buffer (what the user sees)
 			glReadBuffer(GL_FRONT);
+			// Get pixel color data
 			uint8_t *data = new uint8_t[height * width * 4];
 			glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, data);
+
+			if (cursor && glfwGetInputMode(APP->window->win, GLFW_CURSOR) == GLFW_CURSOR_NORMAL) {
+				// Get mouse position
+				double cursorXd, cursorYd;
+				glfwGetCursorPos(APP->window->win, &cursorXd, &cursorYd);
+				int cursorX = (int) std::round(cursorXd);
+				int cursorY = (int) std::round(cursorYd);
+				// Offset cursor
+				cursorX -= 3;
+				cursorY -= 3;
+
+				// Draw cursor
+				blitRGBA(data, width, height, width * 4, cursor, cursorWidth, cursorHeight, cursorWidth * 4, cursorX, height - cursorY - cursorHeight);
+			}
+
 			module->writeVideo(data, width, height);
 
 			delete[] data;

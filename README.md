@@ -11,3 +11,5 @@ The **VCV logo and icon** are copyright © 2017 Andrew Belt and may not be used 
 
 The **panel graphics** in the `res` directory are copyright © 2019 [Grayscale](http://grayscale.info/) and licensed under [CC BY-NC-ND 4.0](https://creativecommons.org/licenses/by-nc-nd/4.0/).
 You may not create modified adaptations of these graphics.
+
+Cursor images are from [adwaita-icon-theme](https://github.com/GNOME/adwaita-icon-theme) and licensed under [CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/).
