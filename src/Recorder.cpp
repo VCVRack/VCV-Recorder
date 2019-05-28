@@ -1,5 +1,5 @@
 #include "plugin.hpp"
-#include "osdialog.h"
+#include <osdialog.h>
 #include <mutex>
 #include <regex>
 #include <atomic>
@@ -247,8 +247,8 @@ struct Encoder {
 
 			// Allocate videoData
 			int videoDataSize = videoCtx->width * videoCtx->height * 4;
-			videoData[0] = (uint8_t*) malloc(videoDataSize);
-			videoData[1] = (uint8_t*) malloc(videoDataSize);
+			videoData[0] = new uint8_t[videoDataSize];
+			videoData[1] = new uint8_t[videoDataSize];
 			memset(videoData[0], 0, videoDataSize);
 			memset(videoData[1], 0, videoDataSize);
 		}
@@ -320,9 +320,9 @@ struct Encoder {
 			sws = NULL;
 		}
 		if (videoData[0]) {
-			free(videoData[0]);
+			delete[] videoData[0];
 			videoData[0] = NULL;
-			free(videoData[1]);
+			delete[] videoData[1];
 			videoData[1] = NULL;
 		}
 
@@ -425,9 +425,6 @@ struct Encoder {
 		// Flush packets to file
 		flushFrame(videoCtx, videoStream, videoFrame);
 
-		// Flip double buffer
-		videoDataIndex ^= 1;
-
 		// Advance frame
 		videoFrame->pts++;
 	}
@@ -438,6 +435,10 @@ struct Encoder {
 
 	uint8_t *getConsumerVideoData() {
 		return videoData[!videoDataIndex];
+	}
+
+	void flipVideoData() {
+		videoDataIndex ^= 1;
 	}
 
 	int getVideoWidth() {
@@ -697,6 +698,9 @@ struct Recorder : Module {
 		int videoWidth = encoder->getVideoWidth();
 		int videoHeight = encoder->getVideoHeight();
 
+		// Fill black pixels
+		memset(videoData, 0, videoWidth * videoHeight * 4);
+
 		// Copy video
 		for (int videoY = 0; videoY < videoHeight; videoY++) {
 			int y = videoHeight - videoY;
@@ -704,16 +708,14 @@ struct Recorder : Module {
 			// Copy horizontal line
 			if (w > 0)
 				memcpy(&videoData[videoY * videoWidth * 4], &data[y * width * 4], w * 4);
-			// Fill black pixels
-			if (w < videoWidth)
-				memset(&videoData[(videoY * videoWidth + w) * 4], 0, (videoWidth - w) * 4);
 		}
+		encoder->flipVideoData();
 	}
 
 	bool needsVideo() {
 		if (!encoder)
 			return false;
-		return (encoder->getProducerVideoData() != NULL);
+		return !!encoder->getProducerVideoData();
 	}
 
 	void fixPathExtension() {
@@ -1013,8 +1015,8 @@ struct RecorderWidget : ModuleWidget {
 		menu->addChild(pathItem);
 
 		IncrementPathItem *incrementPathItem = new IncrementPathItem;
-		incrementPathItem->text = "Overwrite existing file";
-		incrementPathItem->rightText = CHECKMARK(!module->incrementPath);
+		incrementPathItem->text = "Append -001, -002, etc.";
+		incrementPathItem->rightText = CHECKMARK(module->incrementPath);
 		incrementPathItem->module = module;
 		menu->addChild(incrementPathItem);
 
@@ -1070,8 +1072,8 @@ struct RecorderWidget : ModuleWidget {
 		}
 	}
 
-	void draw(const DrawArgs &args) override {
-		ModuleWidget::draw(args);
+	void step() override {
+		ModuleWidget::step();
 		if (!this->module)
 			return;
 		Recorder *module = dynamic_cast<Recorder*>(this->module);
@@ -1081,9 +1083,13 @@ struct RecorderWidget : ModuleWidget {
 		module->setSize(width, height);
 
 		if (module->needsVideo()) {
-			uint8_t data[height * width * 4];
+			// glReadPixels defaults to GL_BACK, but the back-buffer is unstable, so use the front buffer (what the user sees)
+			glReadBuffer(GL_FRONT);
+			uint8_t *data = new uint8_t[height * width * 4];
 			glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, data);
 			module->writeVideo(data, width, height);
+
+			delete[] data;
 		}
 	}
 };
