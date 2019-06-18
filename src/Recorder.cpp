@@ -51,9 +51,11 @@ struct FormatInfo {
 };
 
 
+// Formats available for the user to choose
 static const std::vector<std::string> AUDIO_FORMATS = {"wav", "aiff", "flac", "alac", "mp3"};
-static const std::vector<std::string> VIDEO_FORMATS = {"mpeg2"};
+static const std::vector<std::string> VIDEO_FORMATS = {"mpeg2", "ffv1"};
 
+// Some of these might not be enabled.
 static const std::map<std::string, FormatInfo> FORMAT_INFO = {
 	{"wav", {"WAV", "wav"}},
 	{"aiff", {"AIFF", "aif"}},
@@ -62,6 +64,8 @@ static const std::map<std::string, FormatInfo> FORMAT_INFO = {
 	{"mp3", {"MP3", "mp3"}},
 	{"mpeg2", {"MPEG-2 video", "mpg"}},
 	{"h264", {"H.264", "mp4"}},
+	{"huffyuv", {"HuffYUV (lossless)", "avi"}},
+	{"ffv1", {"FFV1 (lossless)", "avi"}},
 };
 
 
@@ -107,6 +111,8 @@ struct Encoder {
 		else if (format == "mp3") formatName = "mp3";
 		else if (format == "mpeg2") formatName = "mpeg";
 		else if (format == "h264") formatName = "mp4";
+		else if (format == "huffyuv") formatName = "avi";
+		else if (format == "ffv1") formatName = "avi";
 		else assert(0);
 
 		err = avformat_alloc_output_context2(&formatCtx, NULL, formatName.c_str(), path.c_str());
@@ -138,7 +144,10 @@ struct Encoder {
 		else if (format == "flac") audioEncoderName = "flac";
 		else if (format == "alac") audioEncoderName = "alac";
 		else if (format == "mp3") audioEncoderName = "libmp3lame";
-		else if (format == "mpeg2" || format == "h264") audioEncoderName = "mp2";
+		else if (format == "mpeg2" ) audioEncoderName = "mp2";
+		else if (format == "h264") audioEncoderName = "mp2";
+		else if (format == "huffyuv") audioEncoderName = "pcm_s16le";
+		else if (format == "ffv1") audioEncoderName = "pcm_s16le";
 		else assert(0);
 
 		audioCodec = avcodec_find_encoder_by_name(audioEncoderName.c_str());
@@ -172,7 +181,10 @@ struct Encoder {
 			else assert(0);
 		}
 		else if (format == "mp3") audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
-		else if (format == "mpeg2" || format == "h264") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+		else if (format == "mpeg2") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+		else if (format == "h264") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+		else if (format == "huffyuv") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+		else if (format == "ffv1") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 		else assert(0);
 
 		// Set bitrate
@@ -215,11 +227,13 @@ struct Encoder {
 		assert(err >= 0);
 
 		// Video
-		if (format == "mpeg2" || format == "h264") {
+		if (format == "mpeg2" || format == "h264" || format == "huffyuv" || format == "ffv1") {
 			// Find video encoder
 			std::string videoEncoderName;
 			if (format == "mpeg2") videoEncoderName = "mpeg2video";
 			else if (format == "h264") videoEncoderName = "h264";
+			else if (format == "huffyuv") videoEncoderName = "huffyuv";
+			else if (format == "ffv1") videoEncoderName = "ffv1";
 			else assert(0);
 
 			videoCodec = avcodec_find_encoder_by_name(videoEncoderName.c_str());
@@ -1030,7 +1044,8 @@ struct RecorderWidget : ModuleWidget {
 		stbi_set_unpremultiply_on_load(1);
 		stbi_convert_iphone_png_to_rgb(1);
 		stbi_set_flip_vertically_on_load(1);
-		cursor = stbi_load(asset::plugin(pluginInstance, "res/cursor.png").c_str(), &cursorWidth, &cursorHeight, &cursorComp, STBI_rgb_alpha);
+		std::string cursorPath = asset::plugin(pluginInstance, "res/cursor.png");
+		cursor = stbi_load(cursorPath.c_str(), &cursorWidth, &cursorHeight, &cursorComp, STBI_rgb_alpha);
 		stbi_set_unpremultiply_on_load(0);
 		stbi_convert_iphone_png_to_rgb(0);
 		stbi_set_flip_vertically_on_load(0);
