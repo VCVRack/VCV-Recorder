@@ -28,6 +28,9 @@ OBJECTS += $(lame)
 
 DEPS += $(ffmpeg)
 
+# ffmpeg's configure script doesn't respect --prefix for finding dependencies, so add the paths manually here
+DEP_FLAGS += -I$(DEP_PATH)/include
+DEP_LDFLAGS += -L$(DEP_PATH)/lib
 
 FFMPEG_FORMATS += --enable-muxer=wav --enable-encoder=pcm_s16le --enable-encoder=pcm_s24le
 FFMPEG_FORMATS += --enable-muxer=aiff --enable-encoder=pcm_s16be --enable-encoder=pcm_s24be
