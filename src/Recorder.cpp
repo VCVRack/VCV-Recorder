@@ -53,7 +53,7 @@ struct FormatInfo {
 
 // Formats available for the user to choose
 static const std::vector<std::string> AUDIO_FORMATS = {"wav", "aiff", "flac", "alac", "mp3"};
-static const std::vector<std::string> VIDEO_FORMATS = {"mpeg2", "ffv1"};
+static const std::vector<std::string> VIDEO_FORMATS = {"mpeg2", "ffv1", "huffyuv"};
 
 // Some of these might not be enabled.
 static const std::map<std::string, FormatInfo> FORMAT_INFO = {
@@ -248,7 +248,8 @@ struct Encoder {
 			videoCtx->width = (width / 2) * 2;
 			videoCtx->height = (height / 2) * 2;
 			videoCtx->gop_size = 10;
-			videoCtx->pix_fmt = AV_PIX_FMT_YUV420P;
+			if (format == "huffyuv") videoCtx->pix_fmt = AV_PIX_FMT_RGB24;
+			else videoCtx->pix_fmt = AV_PIX_FMT_YUV420P;
 			videoCtx->framerate = (AVRational) {30, 1};
 			videoCtx->max_b_frames = 2;
 
@@ -278,8 +279,7 @@ struct Encoder {
 			assert(err >= 0);
 
 			// Create video rescaler
-			// TODO Change this to SWS_POINT if that means nearest-neighbor
-			sws = sws_getContext(videoCtx->width, videoCtx->height, AV_PIX_FMT_RGBA, videoCtx->width, videoCtx->height, videoCtx->pix_fmt, SWS_BILINEAR, NULL, NULL, NULL);
+			sws = sws_getContext(videoCtx->width, videoCtx->height, AV_PIX_FMT_RGBA, videoCtx->width, videoCtx->height, videoCtx->pix_fmt, SWS_POINT, NULL, NULL, NULL);
 			assert(sws);
 
 			// Allocate videoData

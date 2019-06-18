@@ -36,7 +36,7 @@ FFMPEG_FORMATS += --enable-libmp3lame --enable-muxer=mp3 --enable-encoder=libmp3
 FFMPEG_FORMATS += --enable-muxer=flac --enable-encoder=flac
 FFMPEG_FORMATS += --enable-muxer=ipod --enable-encoder=alac
 FFMPEG_FORMATS += --enable-muxer=mpeg1system --enable-encoder=mpeg2video --enable-encoder=mp2
-# FFMPEG_FORMATS += --enable-muxer=avi --enable-encoder=huffyuv
+FFMPEG_FORMATS += --enable-muxer=avi --enable-encoder=huffyuv
 FFMPEG_FORMATS += --enable-muxer=avi --enable-encoder=ffv1
 ifdef ARCH_MAC
 # 	FFMPEG_FORMATS += --enable-videotoolbox --enable-muxer=mp4 --enable-encoder=h264_videotoolbox --enable-encoder=mp2
