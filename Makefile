@@ -26,7 +26,6 @@ OBJECTS += dep/lib/libavutil.a
 OBJECTS += dep/lib/libswscale.a
 OBJECTS += $(lame)
 
-DEP_LOCAL := dep
 DEPS += $(ffmpeg)
 
 
@@ -44,12 +43,12 @@ endif
 
 $(ffmpeg): $(lame)
 	# Don't use $(CONFIGURE) because this is a handwritten configure script
-	cd dep/ffmpeg && ./configure --prefix="$(DEP_PATH)" --enable-pic --enable-gpl \
+	cd ffmpeg && ./configure --prefix="$(DEP_PATH)" --enable-pic --enable-gpl \
 		--disable-programs --disable-doc --disable-avdevice --disable-swresample --disable-postproc --disable-avfilter --disable-network --disable-iconv --disable-alsa --disable-autodetect --disable-everything \
 		--enable-protocol=file \
 		$(FFMPEG_FORMATS)
-	cd dep/ffmpeg && $(MAKE)
-	cd dep/ffmpeg && $(MAKE) install
+	cd ffmpeg && $(MAKE)
+	cd ffmpeg && $(MAKE) install
 
 $(lame):
 	# Use -nc because Sourceforce mirrors don't understand -c if the file already exists
