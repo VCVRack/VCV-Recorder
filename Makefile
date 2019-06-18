@@ -9,6 +9,10 @@ ifdef ARCH_LIN
 	# No idea what this does. Recommended by https://ffmpeg.org/platform.html#Advanced-linking-configuration
 	LDFLAGS += -Wl,-Bsymbolic
 endif
+ifdef ARCH_WIN
+	# Windows DLLs need to link explicitly to other DLLs
+	LDFLAGS += -lopengl32 -lbcrypt
+endif
 
 SOURCES += $(wildcard src/*.cpp)
 
