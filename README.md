@@ -1,5 +1,7 @@
 # VCV Recorder
 
+Requires [NASM](https://www.nasm.us/index.php) or [Yasm](https://yasm.tortall.net/) to build.
+
 ## License
 
 All **source code** is copyright © 2019 Andrew Belt and licensed under [BSD-3-Clause](LICENSE.txt).
