@@ -4,6 +4,7 @@
 #include <regex>
 #include <atomic>
 #include <thread>
+#include <condition_variable>
 #include <stb_image.h>
 
 extern "C" {
