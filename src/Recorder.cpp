@@ -70,7 +70,7 @@ static const std::map<std::string, FormatInfo> FORMAT_INFO = {
 };
 
 
-static const int AUDIO_FRAME_BUFFER_LEN = 128;
+static const int AUDIO_FRAME_BUFFER_LEN = 32;
 
 
 struct Encoder {
@@ -119,6 +119,10 @@ struct Encoder {
 		// This method can only be called once per instance.
 		assert(!initialized);
 		initialized = true;
+
+		// Don't print ffmpeg messages to console.
+		av_log_set_level(AV_LOG_QUIET);
+		// av_log_set_level(AV_LOG_DEBUG);
 
 		// Create muxer
 		std::string formatName;
@@ -240,7 +244,7 @@ struct Encoder {
 			audioFrames[i]->nb_samples = audioCtx->frame_size;
 			// PCM doesn't set nb_samples, so use a sane default.
 			if (audioFrames[i]->nb_samples == 0)
-				audioFrames[i]->nb_samples = 16;
+				audioFrames[i]->nb_samples = 1024;
 
 			err = av_frame_get_buffer(audioFrames[i], 0);
 			assert(err >= 0);
@@ -248,6 +252,7 @@ struct Encoder {
 			err = av_frame_make_writable(audioFrames[i]);
 			assert(err >= 0);
 		}
+		// DEBUG("audio frame nb_samples %d", audioFrames[0]->nb_samples);
 
 		// Video
 		if (format == "mpeg2" || format == "h264" || format == "huffyuv" || format == "ffv1") {
@@ -299,6 +304,9 @@ struct Encoder {
 			videoFrame->height = videoCtx->height;
 
 			err = av_frame_get_buffer(videoFrame, 0);
+			assert(err >= 0);
+
+			err = av_frame_make_writable(videoFrame);
 			assert(err >= 0);
 
 			// Create video rescaler
@@ -399,7 +407,8 @@ struct Encoder {
 		}
 	}
 
-	/** `input` must be `audioCtx->channels` length and between -1 and 1.
+	/** `input` must be `audioCtx->channels` length.
+	Called by the main thread.
 	*/
 	void writeAudio(float *input) {
 		if (!audioCtx)
@@ -468,14 +477,13 @@ struct Encoder {
 		}
 	}
 
+	/** Writes one video frame from `videoData` and flushes it.
+	Called by the worker thread.
+	*/
 	void writeVideo() {
-		int err;
 		if (!videoCtx)
 			return;
-
 		assert(videoFrame);
-		err = av_frame_make_writable(videoFrame);
-		assert(err >= 0);
 
 		uint8_t *videoData = getConsumerVideoData();
 		if (!videoData)
@@ -605,6 +613,7 @@ struct Recorder : Module {
 		NUM_LIGHTS
 	};
 
+	dsp::ClockDivider gateDivider;
 	dsp::BooleanTrigger recTrigger;
 	dsp::SchmittTrigger trigTrigger;
 	dsp::VuMeter2 vuMeter[2];
@@ -629,6 +638,7 @@ struct Recorder : Module {
 		configParam(GAIN_PARAM, 0.f, 2.f, 1.f, "Gain", " dB", -10, 20);
 		configParam(REC_PARAM, 0.f, 1.f, 0.f, "Record");
 
+		gateDivider.setDivision(32);
 		lightDivider.setDivision(512);
 		onReset();
 	}
@@ -649,6 +659,10 @@ struct Recorder : Module {
 		depth = 16;
 		bitRate = 320000;
 		width = height = 0;
+	}
+
+	void onSampleRateChange() override {
+		stop();
 	}
 
 	json_t *dataToJson() override {
@@ -689,28 +703,29 @@ struct Recorder : Module {
 	}
 
 	void process(const ProcessArgs &args) override {
-		// Record state
-		bool gate = isRecording();
-		bool oldGate = gate;
-		if (recTrigger.process(params[REC_PARAM].getValue())) {
-			gate ^= true;
-		}
-		if (trigTrigger.process(rescale(inputs[TRIG_INPUT].getVoltage(), 0.1, 2.0, 0.0, 1.0))) {
-			gate ^= true;
-		}
-		if (inputs[GATE_INPUT].isConnected()) {
-			gate = (inputs[GATE_INPUT].getVoltage() >= 2.f);
-		}
+		if (gateDivider.process()) {
+			// Recording state
+			bool gate = isRecording();
+			bool oldGate = gate;
+			if (recTrigger.process(params[REC_PARAM].getValue())) {
+				gate ^= true;
+			}
+			if (trigTrigger.process(rescale(inputs[TRIG_INPUT].getVoltage(), 0.1, 2.0, 0.0, 1.0))) {
+				gate ^= true;
+			}
+			if (inputs[GATE_INPUT].isConnected()) {
+				gate = (inputs[GATE_INPUT].getVoltage() >= 2.f);
+			}
 
-		// Start/stop
-		if (gate && !oldGate) {
-			channels = inputs[RIGHT_INPUT].isConnected() ? 2 : 1;
-			start();
+			// Start/stop
+			if (gate && !oldGate) {
+				channels = inputs[RIGHT_INPUT].isConnected() ? 2 : 1;
+				start();
+			}
+			else if (!gate && oldGate) {
+				stop();
+			}
 		}
-		else if (!gate && oldGate) {
-			stop();
-		}
-		gate = isRecording();
 
 		// Input
 		float gain = params[GAIN_PARAM].getValue();
@@ -723,8 +738,10 @@ struct Recorder : Module {
 
 		// Process
 		setSampleRate((int) args.sampleRate);
-		{
+		// Check roughly
+		if (encoder) {
 			std::lock_guard<std::mutex> lock(encoderMutex);
+			// Check for certain behind lock
 			if (encoder)
 				encoder->writeAudio(in);
 		}
@@ -743,7 +760,7 @@ struct Recorder : Module {
 				lights[VU_LIGHTS + i * 6 + 5].setBrightness(vuMeter[i].getBrightness(-36, -24));
 			}
 
-			lights[REC_LIGHT].setBrightness(gate);
+			lights[REC_LIGHT].setBrightness(isRecording());
 		}
 	}
 
@@ -1145,7 +1162,7 @@ struct RecorderWidget : ModuleWidget {
 		menu->addChild(incrementPathItem);
 
 		menu->addChild(new MenuEntry);
-		menu->addChild(createMenuLabel("Audio"));
+		menu->addChild(createMenuLabel("Audio formats"));
 
 		for (const std::string &format : AUDIO_FORMATS) {
 			const FormatInfo &fi = FORMAT_INFO.at(format);
@@ -1158,7 +1175,7 @@ struct RecorderWidget : ModuleWidget {
 		}
 
 		menu->addChild(new MenuEntry);
-		menu->addChild(createMenuLabel("Video (experimental)"));
+		menu->addChild(createMenuLabel("Video formats"));
 
 		for (const std::string &format : VIDEO_FORMATS) {
 			const FormatInfo &fi = FORMAT_INFO.at(format);
