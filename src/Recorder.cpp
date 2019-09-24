@@ -3,6 +3,7 @@
 #include <mutex>
 #include <regex>
 #include <atomic>
+#include <thread>
 #include <stb_image.h>
 
 extern "C" {
@@ -69,9 +70,20 @@ static const std::map<std::string, FormatInfo> FORMAT_INFO = {
 };
 
 
+static const int AUDIO_FRAME_BUFFER_LEN = 128;
+
+
 struct Encoder {
 	bool initialized = false;
 	bool opened = false;
+	bool running = false;
+
+	std::thread workerThread;
+	std::mutex workerMutex;
+	std::condition_variable workerCv;
+	/** Used in case the main thread needs to wait on the worker */
+	std::mutex mainMutex;
+	std::condition_variable mainCv;
 
 	AVFormatContext *formatCtx = NULL;
 	AVIOContext *io = NULL;
@@ -79,8 +91,13 @@ struct Encoder {
 	AVCodec *audioCodec = NULL;
 	AVCodecContext *audioCtx = NULL;
 	AVStream *audioStream = NULL;
-	AVFrame *audioFrame = NULL;
-	int frameIndex = 0;
+	AVFrame *audioFrames[AUDIO_FRAME_BUFFER_LEN] = {};
+	/** Number of audio samples written */
+	int64_t audioSampleIndex = 0;
+	/** Number of audio samples written to the current audio frame */
+	int audioFrameSampleIndex = 0;
+	int64_t audioFrameIndex = 0;
+	int64_t workerAudioFrameIndex = 0;
 
 	AVCodec *videoCodec = NULL;
 	AVCodecContext *videoCtx = NULL;
@@ -93,6 +110,7 @@ struct Encoder {
 	std::atomic<int> videoDataIndex{0};
 
 	~Encoder() {
+		stop();
 		close();
 	}
 
@@ -211,20 +229,25 @@ struct Encoder {
 		assert(err >= 0);
 
 		// Create audio frame
-		audioFrame = av_frame_alloc();
-		assert(audioFrame);
+		for (int i = 0; i < AUDIO_FRAME_BUFFER_LEN; i++) {
+			audioFrames[i] = av_frame_alloc();
+			assert(audioFrames[i]);
 
-		audioFrame->pts = 0;
-		audioFrame->format = audioCtx->sample_fmt;
-		audioFrame->channel_layout = audioCtx->channel_layout;
-		audioFrame->sample_rate = audioCtx->sample_rate;
-		audioFrame->nb_samples = audioCtx->frame_size;
-		// PCM doesn't set nb_samples, so use a sane default.
-		if (audioFrame->nb_samples == 0)
-			audioFrame->nb_samples = 16;
+			audioFrames[i]->pts = 0;
+			audioFrames[i]->format = audioCtx->sample_fmt;
+			audioFrames[i]->channel_layout = audioCtx->channel_layout;
+			audioFrames[i]->sample_rate = audioCtx->sample_rate;
+			audioFrames[i]->nb_samples = audioCtx->frame_size;
+			// PCM doesn't set nb_samples, so use a sane default.
+			if (audioFrames[i]->nb_samples == 0)
+				audioFrames[i]->nb_samples = 16;
 
-		err = av_frame_get_buffer(audioFrame, 0);
-		assert(err >= 0);
+			err = av_frame_get_buffer(audioFrames[i], 0);
+			assert(err >= 0);
+
+			err = av_frame_make_writable(audioFrames[i]);
+			assert(err >= 0);
+		}
 
 		// Video
 		if (format == "mpeg2" || format == "h264" || format == "huffyuv" || format == "ffv1") {
@@ -338,8 +361,10 @@ struct Encoder {
 		}
 
 		// Clean up audio
-		if (audioFrame)
-			av_frame_free(&audioFrame);
+		for (int i = 0; i < AUDIO_FRAME_BUFFER_LEN; i++) {
+			if (audioFrames[i])
+				av_frame_free(&audioFrames[i]);
+		}
 		if (audioCtx)
 			avcodec_free_context(&audioCtx);
 		audioCodec = NULL;
@@ -377,68 +402,70 @@ struct Encoder {
 	/** `input` must be `audioCtx->channels` length and between -1 and 1.
 	*/
 	void writeAudio(float *input) {
-		int err;
 		if (!audioCtx)
 			return;
 
-		err = av_frame_make_writable(audioFrame);
-		assert(err >= 0);
+		// Wait if the worker thread is too far behind.
+		while (audioFrameIndex - workerAudioFrameIndex >= AUDIO_FRAME_BUFFER_LEN) {
+			std::unique_lock<std::mutex> lock(mainMutex);
+			mainCv.wait(lock);
+		}
+
+		// Get audio frame
+		AVFrame* audioFrame = audioFrames[audioFrameIndex % AUDIO_FRAME_BUFFER_LEN];
 
 		// Set output
 		if (audioCtx->sample_fmt == AV_SAMPLE_FMT_FLTP) {
 			float **output = (float**) audioFrame->data;
-			for (int i = 0; i < audioCtx->channels; i++) {
-				float v = clamp(input[i], -1.f, 1.f);
-				output[i][frameIndex] = v;
+			for (int c = 0; c < audioCtx->channels; c++) {
+				float v = clamp(input[c], -1.f, 1.f);
+				output[c][audioFrameSampleIndex] = v;
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S16) {
 			int16_t **output = (int16_t**) audioFrame->data;
-			for (int i = 0; i < audioCtx->channels; i++) {
-				float v = clamp(input[i], -1.f, 1.f);
-				output[0][frameIndex * audioCtx->channels + i] = (int16_t) std::round(v * 0x7fff);
+			for (int c = 0; c < audioCtx->channels; c++) {
+				float v = clamp(input[c], -1.f, 1.f);
+				output[0][audioFrameSampleIndex * audioCtx->channels + c] = (int16_t) std::round(v * 0x7fff);
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S32) {
 			int32_t **output = (int32_t**) audioFrame->data;
-			for (int i = 0; i < audioCtx->channels; i++) {
-				float v = clamp(input[i], -1.f, 1.f);
-				output[0][frameIndex * audioCtx->channels + i] = (int32_t) std::round(v * 0x7fffffff);
+			for (int c = 0; c < audioCtx->channels; c++) {
+				float v = clamp(input[c], -1.f, 1.f);
+				output[0][audioFrameSampleIndex * audioCtx->channels + c] = (int32_t) std::round(v * 0x7fffffff);
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S16P) {
 			int16_t **output = (int16_t**) audioFrame->data;
-			for (int i = 0; i < audioCtx->channels; i++) {
-				float v = clamp(input[i], -1.f, 1.f);
-				output[i][frameIndex] = (int16_t) std::round(v * 0x7fff);
+			for (int c = 0; c < audioCtx->channels; c++) {
+				float v = clamp(input[c], -1.f, 1.f);
+				output[c][audioFrameSampleIndex] = (int16_t) std::round(v * 0x7fff);
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S32P) {
 			int32_t **output = (int32_t**) audioFrame->data;
-			for (int i = 0; i < audioCtx->channels; i++) {
-				float v = clamp(input[i], -1.f, 1.f);
-				output[i][frameIndex] = (int32_t) std::round(v * 0x7fffffff);
+			for (int c = 0; c < audioCtx->channels; c++) {
+				float v = clamp(input[c], -1.f, 1.f);
+				output[c][audioFrameSampleIndex] = (int32_t) std::round(v * 0x7fffffff);
 			}
 		}
 		else {
 			assert(0);
 		}
 
-		// Write a video frame if needed
-		if (videoCtx && av_compare_ts(videoFrame->pts, videoCtx->time_base, audioFrame->pts, audioCtx->time_base) <= 0) {
-			// DEBUG("%f %f", (float) videoFrame->pts * videoCtx->time_base.num / videoCtx->time_base.den, (float) audioFrame->pts * audioCtx->time_base.num / audioCtx->time_base.den);
-			writeVideo();
-		}
+		// Advance to the next frame if the current frame is full
+		audioFrameSampleIndex++;
+		if (audioFrameSampleIndex >= audioFrame->nb_samples) {
+			audioFrameSampleIndex = 0;
+			audioFrameIndex++;
 
-		// Flush the frame if the frame buffer is full
-		frameIndex++;
-		if (frameIndex >= audioFrame->nb_samples) {
-			frameIndex = 0;
-			flushFrame(audioCtx, audioStream, audioFrame);
+			// Finalize audio frame
+			audioFrame->pts = audioSampleIndex;
+			audioSampleIndex += audioFrame->nb_samples;
+			// Wake up worker thread
+			workerCv.notify_one();
 		}
-
-		// Advance frame
-		audioFrame->pts++;
 	}
 
 	void writeVideo() {
@@ -513,6 +540,40 @@ struct Encoder {
 			err = av_interleaved_write_frame(formatCtx, &pkt);
 			assert(err >= 0);
 		}
+	}
+
+	void run() {
+		std::unique_lock<std::mutex> lock(workerMutex);
+		while (running) {
+			workerCv.wait(lock);
+
+			// Flush audio frames until we catch up to the engine thread (producer).
+			for (; workerAudioFrameIndex < audioFrameIndex; workerAudioFrameIndex++) {
+				AVFrame* audioFrame = audioFrames[workerAudioFrameIndex % AUDIO_FRAME_BUFFER_LEN];
+				flushFrame(audioCtx, audioStream, audioFrame);
+
+				// Write a video frame if it's time for one relative to the audio buffer
+				if (videoCtx && av_compare_ts(videoFrame->pts, videoCtx->time_base, audioFrame->pts, audioCtx->time_base) <= 0) {
+					// DEBUG("%f %f", (float) videoFrame->pts * videoCtx->time_base.num / videoCtx->time_base.den, (float) audioFrames[audioFrameIndex]->pts * audioCtx->time_base.num / audioCtx->time_base.den);
+					writeVideo();
+				}
+				mainCv.notify_one();
+			}
+		}
+	}
+
+	void start() {
+		running = true;
+		workerThread = std::thread([&] {
+			run();
+		});
+	}
+
+	void stop() {
+		running = false;
+		workerCv.notify_one();
+		if (workerThread.joinable())
+			workerThread.join();
 	}
 };
 
@@ -655,7 +716,10 @@ struct Recorder : Module {
 		float gain = params[GAIN_PARAM].getValue();
 		float in[2];
 		in[0] = inputs[LEFT_INPUT].getVoltage() / 10.f * gain;
-		in[1] = inputs[RIGHT_INPUT].getVoltage() / 10.f * gain;
+		if (inputs[RIGHT_INPUT].isConnected())
+			in[1] = inputs[RIGHT_INPUT].getVoltage() / 10.f * gain;
+		else
+			in[1] = in[0];
 
 		// Process
 		setSampleRate((int) args.sampleRate);
@@ -709,7 +773,9 @@ struct Recorder : Module {
 		if (!encoder->isOpen()) {
 			delete encoder;
 			encoder = NULL;
+			return;
 		}
+		encoder->start();
 	}
 
 	void stop() {
