@@ -54,7 +54,7 @@ struct FormatInfo {
 
 
 // Formats available for the user to choose
-static const std::vector<std::string> AUDIO_FORMATS = {"wav", "aiff", "flac", "alac", "mp3"};
+static const std::vector<std::string> AUDIO_FORMATS = {"wav", "aiff", "flac", "alac", "mp3", "opus"};
 static const std::vector<std::string> VIDEO_FORMATS = {"mpeg2", "ffv1", "huffyuv"};
 
 // Some of these might not be enabled.
@@ -64,6 +64,7 @@ static const std::map<std::string, FormatInfo> FORMAT_INFO = {
 	{"flac", {"FLAC", "flac"}},
 	{"alac", {"ALAC", "m4a"}},
 	{"mp3", {"MP3", "mp3"}},
+	{"opus", {"Opus", "opus"}},
 	{"mpeg2", {"MPEG-2 video", "mpg"}},
 	{"h264", {"H.264", "mp4"}},
 	{"huffyuv", {"HuffYUV (lossless)", "avi"}},
@@ -132,6 +133,7 @@ struct Encoder {
 		else if (format == "flac") formatName = "flac";
 		else if (format == "alac") formatName = "ipod";
 		else if (format == "mp3") formatName = "mp3";
+		else if (format == "opus") formatName = "opus";
 		else if (format == "mpeg2") formatName = "mpeg";
 		else if (format == "h264") formatName = "mp4";
 		else if (format == "huffyuv") formatName = "avi";
@@ -167,6 +169,7 @@ struct Encoder {
 		else if (format == "flac") audioEncoderName = "flac";
 		else if (format == "alac") audioEncoderName = "alac";
 		else if (format == "mp3") audioEncoderName = "libmp3lame";
+		else if (format == "opus") audioEncoderName = "libopus";
 		else if (format == "mpeg2" ) audioEncoderName = "mp2";
 		else if (format == "h264") audioEncoderName = "mp2";
 		else if (format == "huffyuv") audioEncoderName = "pcm_s16le";
@@ -204,6 +207,7 @@ struct Encoder {
 			else assert(0);
 		}
 		else if (format == "mp3") audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
+		else if (format == "opus") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 		else if (format == "mpeg2") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 		else if (format == "h264") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 		else if (format == "huffyuv") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
@@ -211,7 +215,7 @@ struct Encoder {
 		else assert(0);
 
 		// Set bitrate
-		if (format == "mp3" || format == "mpeg2" || format == "h264") {
+		if (format == "mp3" || format == "opus" || format == "mpeg2" || format == "h264") {
 			audioCtx->bit_rate = bitRate;
 		}
 
@@ -913,7 +917,7 @@ struct Recorder : Module {
 	}
 
 	bool showBitRate() {
-		return (format == "mp3" || format == "mpeg2");
+		return (format == "mp3" || format == "opus" || format == "mpeg2");
 	}
 
 	void setSize(int width, int height) {
