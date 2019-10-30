@@ -219,9 +219,27 @@ struct Encoder {
 			audioCtx->bit_rate = bitRate;
 		}
 
+		// Check sample rate
+		bool validSampleRate = false;
+		for (const int *p = audioCodec->supported_samplerates; p && *p != 0; p++) {
+			if (sampleRate == *p) {
+				validSampleRate = true;
+				break;
+			}
+		}
+		if (!validSampleRate) {
+			WARN("Sample rate %d not supported by codec", sampleRate);
+			return;
+		}
+
 		// Set sample rate
 		audioCtx->sample_rate = sampleRate;
 		audioCtx->time_base = (AVRational) {1, audioCtx->sample_rate};
+
+		// // Check sample format
+		// for (const enum AVSampleFormat *x = audioCodec->sample_fmts; x && *x != -1; x++) {
+		// 	DEBUG("sample format: %s", av_get_sample_fmt_name(*x));
+		// }
 
 		// Open audio encoder
 		err = avcodec_open2(audioCtx, audioCodec, NULL);
@@ -329,16 +347,6 @@ struct Encoder {
 		av_dump_format(formatCtx, 0, url.c_str(), true);
 
 		#if 0
-		// Supported sample rates
-		for (const int *x = audioCodec->supported_samplerates; x && *x != 0; x++) {
-			DEBUG("sample rate: %d", *x);
-		}
-
-		// Supported sample formats
-		for (const enum AVSampleFormat *x = audioCodec->sample_fmts; x && *x != -1; x++) {
-			DEBUG("sample format: %s", av_get_sample_fmt_name(*x));
-		}
-
 		if (videoCodec) {
 			// Supported framerates
 			for (const AVRational *x = videoCodec->supported_framerates; x && x->num != 0; x++) {
@@ -662,7 +670,7 @@ struct Recorder : Module {
 		channels = 2;
 		sampleRate = 44100;
 		depth = 16;
-		bitRate = 320000;
+		bitRate = 256000;
 		width = height = 0;
 	}
 
@@ -735,9 +743,9 @@ struct Recorder : Module {
 		// Input
 		float gain = params[GAIN_PARAM].getValue();
 		float in[2];
-		in[0] = inputs[LEFT_INPUT].getVoltage() / 10.f * gain;
+		in[0] = inputs[LEFT_INPUT].getVoltageSum() / 10.f * gain;
 		if (inputs[RIGHT_INPUT].isConnected())
-			in[1] = inputs[RIGHT_INPUT].getVoltage() / 10.f * gain;
+			in[1] = inputs[RIGHT_INPUT].getVoltageSum() / 10.f * gain;
 		else
 			in[1] = in[0];
 
@@ -913,7 +921,10 @@ struct Recorder : Module {
 	}
 
 	std::vector<int> getBitRates() {
-		return {128000, 160000, 192000, 224000, 256000, 320000};
+		std::vector<int> bitRates = {128000, 160000, 192000, 224000, 256000};
+		if (format != "opus")
+			bitRates.push_back(320000);
+		return bitRates;
 	}
 
 	bool showBitRate() {
