@@ -966,12 +966,6 @@ static void selectPath(Recorder *module) {
 	}
 }
 
-struct BlackKnob : RoundKnob {
-	BlackKnob() {
-		setSvg(APP->window->loadSvg(asset::plugin(pluginInstance, "res/BlackKnob.svg")));
-	}
-};
-
 
 struct RecButton : SvgSwitch {
 	RecButton() {
@@ -1126,7 +1120,7 @@ struct RecorderWidget : ModuleWidget {
 		addChild(createWidget<ScrewSilver>(Vec(RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
 		addChild(createWidget<ScrewSilver>(Vec(box.size.x - 2 * RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
 
-		addParam(createParamCentered<BlackKnob>(mm2px(Vec(12.7, 21.417)), module, Recorder::GAIN_PARAM));
+		addParam(createParamCentered<RoundBigBlackKnob>(mm2px(Vec(12.7, 21.417)), module, Recorder::GAIN_PARAM));
 		addParam(createParamCentered<RecButton>(mm2px(Vec(12.7, 73.624)), module, Recorder::REC_PARAM));
 
 		addInput(createInputCentered<PJ301MPort>(mm2px(Vec(6.697, 97.253)), module, Recorder::GATE_INPUT));
