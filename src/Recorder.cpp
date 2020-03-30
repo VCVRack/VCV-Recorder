@@ -648,7 +648,7 @@ struct Recorder : Module {
 
 	Recorder() {
 		config(NUM_PARAMS, NUM_INPUTS, NUM_OUTPUTS, NUM_LIGHTS);
-		configParam(GAIN_PARAM, 0.f, 2.f, 1.f, "Gain", " dB", -10, 20);
+		configParam(GAIN_PARAM, 0.f, 2.f, 1.f, "Level", " dB", -10, 20);
 		configParam(REC_PARAM, 0.f, 1.f, 0.f, "Record");
 
 		gateDivider.setDivision(32);
@@ -954,7 +954,8 @@ static void selectPath(Recorder *module) {
 		filename = string::filename(module->path);
 	}
 	else {
-		dir = asset::user("");
+		dir = asset::user("recordings");
+		system::createDirectory(dir);
 		filename = "Untitled";
 	}
 
@@ -979,7 +980,7 @@ struct RecButton : SvgSwitch {
 	}
 
 	void onDragStart(const event::DragStart &e) override {
-		Recorder *module = dynamic_cast<Recorder*>(paramQuantity->module);
+		Recorder *module = dynamic_cast<Recorder*>(this->module);
 		if (module && module->path == "")
 			selectPath(module);
 
@@ -1095,6 +1096,14 @@ struct BitRateItem : MenuItem {
 			menu->addChild(item);
 		}
 		return menu;
+	}
+};
+
+
+struct PrimaryModuleItem : MenuItem {
+	Recorder* module;
+	void onAction(const event::Action& e) override {
+		APP->engine->setPrimaryModule(module);
 	}
 };
 
@@ -1227,6 +1236,13 @@ struct RecorderWidget : ModuleWidget {
 			bitRateItem->module = module;
 			menu->addChild(bitRateItem);
 		}
+
+		menu->addChild(new MenuEntry);
+		PrimaryModuleItem* primaryModuleItem = new PrimaryModuleItem;
+		primaryModuleItem->text = "Primary audio module";
+		primaryModuleItem->rightText = CHECKMARK(APP->engine->getPrimaryModule() == module);
+		primaryModuleItem->module = module;
+		menu->addChild(primaryModuleItem);
 	}
 
 	void step() override {
