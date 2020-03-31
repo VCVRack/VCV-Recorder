@@ -648,7 +648,7 @@ struct Recorder : Module {
 
 	Recorder() {
 		config(NUM_PARAMS, NUM_INPUTS, NUM_OUTPUTS, NUM_LIGHTS);
-		configParam(GAIN_PARAM, 0.f, 2.f, 1.f, "Level", " dB", -10, 20);
+		configParam(GAIN_PARAM, 0.f, 2.f, 1.f, "Level", " dB", -10, 40);
 		configParam(REC_PARAM, 0.f, 1.f, 0.f, "Record");
 
 		gateDivider.setDivision(32);
@@ -741,7 +741,7 @@ struct Recorder : Module {
 		}
 
 		// Input
-		float gain = params[GAIN_PARAM].getValue();
+		float gain = std::pow(params[GAIN_PARAM].getValue(), 2.f);
 		float in[2];
 		in[0] = inputs[LEFT_INPUT].getVoltageSum() / 10.f * gain;
 		if (inputs[RIGHT_INPUT].isConnected())
