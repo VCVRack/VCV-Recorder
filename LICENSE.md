@@ -1,4 +1,6 @@
-All **source code** is copyright © 2019 Andrew Belt and licensed under the [GNU General Public License v3.0](LICENSE-GPLv3.txt).
+All **source code** is copyright © 2019-2020 Andrew Belt.
+
+This program is free software: you can redistribute it and/or modify it under the terms of the [GNU General Public License](https://www.gnu.org/licenses/gpl-3.0.en.html) as published by the [Free Software Foundation](https://www.fsf.org/), either version 3 of the License, or (at your option) any later version.
 
 **Third-party libraries** include [ffmpeg](https://ffmpeg.org/) licensed under [GPLv2.1+](LICENSE-ffmpeg.txt), [LAME](http://lame.sourceforge.net/) licensed under [LGPLv2+](LICENSE-lame.txt), and [libopus](https://opus-codec.org/) licensed under [BSD 3-clause](LICENSE-libopus.txt).
 
