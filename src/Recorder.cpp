@@ -633,6 +633,7 @@ struct Recorder : Module {
 	dsp::ClockDivider lightDivider;
 	Encoder *encoder = NULL;
 	std::mutex encoderMutex;
+	std::thread primaryThread;
 
 	// Settings. Copied to Encoder when created.
 	std::string format;
@@ -658,6 +659,12 @@ struct Recorder : Module {
 
 	~Recorder() {
 		stop();
+
+		// Stop primary thread
+		if (APP->engine->getPrimaryModule() == this) {
+			if (primaryThread.joinable())
+				primaryThread.join();
+		}
 	}
 
 	void onReset() override {
@@ -938,6 +945,35 @@ struct Recorder : Module {
 		this->width = width;
 		this->height = height;
 	}
+
+	void setPrimaryModule(bool enable) {
+		if (enable) {
+			// Check if already primary
+			if (APP->engine->getPrimaryModule() == this)
+				return;
+			// Make sure thread is not running
+			if (primaryThread.joinable())
+				primaryThread.join();
+			APP->engine->setPrimaryModule(this);
+			// Create primary thread
+			primaryThread = std::thread([&](Context* context) {
+				contextSet(context);
+				runPrimaryThread();
+			}, contextGet());
+		}
+		else {
+			APP->engine->setPrimaryModule(NULL);
+			if (primaryThread.joinable())
+				primaryThread.join();
+		}
+	}
+
+	void runPrimaryThread() {
+		while (APP->engine->getPrimaryModule() == this) {
+			APP->engine->step(512);
+			// std::this_thread::yield();
+		}
+	}
 };
 
 
@@ -1097,7 +1133,8 @@ struct BitRateItem : MenuItem {
 struct PrimaryModuleItem : MenuItem {
 	Recorder* module;
 	void onAction(const event::Action& e) override {
-		APP->engine->setPrimaryModule(module);
+		bool isPrimaryModule = (APP->engine->getPrimaryModule() == module);
+		module->setPrimaryModule(!isPrimaryModule);
 	}
 };
 
