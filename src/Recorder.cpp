@@ -18,11 +18,10 @@ extern "C" {
 // DSP
 ////////////////////
 
-
-static void printFfmpegError(int err) {
+static std::string getFfmpegError(int err) {
 	char str[AV_ERROR_MAX_STRING_SIZE];
 	av_strerror(err, str, sizeof(str));
-	DEBUG("ffmpeg error: %s", str);
+	return str;
 }
 
 
@@ -54,18 +53,37 @@ struct FormatInfo {
 
 
 // Formats available for the user to choose
-static const std::vector<std::string> AUDIO_FORMATS = {"wav", "aiff", "flac", "alac", "mp3", "opus"};
-static const std::vector<std::string> VIDEO_FORMATS = {"mpeg2", "ffv1", "huffyuv"};
+static const std::vector<std::string> AUDIO_FORMATS = {
+	"wav",
+	"aiff",
+	"flac",
+	"alac",
+	"mp3",
+#if defined ENABLE_H264
+	"aac",
+#endif
+	"opus",
+};
 
-// Some of these might not be enabled.
+static const std::vector<std::string> VIDEO_FORMATS = {
+	"mpeg2",
+#if defined ENABLE_H264
+	"h264",
+#endif
+	"ffv1",
+	"huffyuv",
+};
+
+// Note that some of these might not be enabled.
 static const std::map<std::string, FormatInfo> FORMAT_INFO = {
 	{"wav", {"WAV", "wav"}},
 	{"aiff", {"AIFF", "aif"}},
 	{"flac", {"FLAC", "flac"}},
 	{"alac", {"ALAC", "m4a"}},
 	{"mp3", {"MP3", "mp3"}},
+	{"aac", {"AAC", "m4a"}},
 	{"opus", {"Opus", "opus"}},
-	{"mpeg2", {"MPEG-2 video", "mpg"}},
+	{"mpeg2", {"MPEG-2", "mpg"}},
 	{"h264", {"H.264", "mp4"}},
 	{"huffyuv", {"HuffYUV (lossless)", "avi"}},
 	{"ffv1", {"FFV1 (lossless)", "avi"}},
@@ -133,6 +151,7 @@ struct Encoder {
 		else if (format == "flac") formatName = "flac";
 		else if (format == "alac") formatName = "ipod";
 		else if (format == "mp3") formatName = "mp3";
+		else if (format == "aac") formatName = "mp4";
 		else if (format == "opus") formatName = "opus";
 		else if (format == "mpeg2") formatName = "mpeg";
 		else if (format == "h264") formatName = "mp4";
@@ -148,7 +167,7 @@ struct Encoder {
 		std::string url = "file:" + path;
 		err = avio_open(&io, url.c_str(), AVIO_FLAG_WRITE);
 		if (err < 0) {
-			printFfmpegError(err);
+			WARN("Could not open output file: %s", getFfmpegError(err).c_str());
 			return;
 		}
 		assert(io);
@@ -169,19 +188,26 @@ struct Encoder {
 		else if (format == "flac") audioEncoderName = "flac";
 		else if (format == "alac") audioEncoderName = "alac";
 		else if (format == "mp3") audioEncoderName = "libmp3lame";
+		else if (format == "aac") audioEncoderName = "aac";
 		else if (format == "opus") audioEncoderName = "libopus";
 		else if (format == "mpeg2" ) audioEncoderName = "mp2";
-		else if (format == "h264") audioEncoderName = "mp2";
+		else if (format == "h264") audioEncoderName = "aac";
 		else if (format == "huffyuv") audioEncoderName = "pcm_s16le";
 		else if (format == "ffv1") audioEncoderName = "pcm_s16le";
 		else assert(0);
 
 		audioCodec = avcodec_find_encoder_by_name(audioEncoderName.c_str());
-		assert(audioCodec);
+		if (!audioCodec) {
+			WARN("Could not find audio encoder %s", audioEncoderName.c_str());
+			return;
+		}
 
 		// Create audio context
 		audioCtx = avcodec_alloc_context3(audioCodec);
-		assert(audioCtx);
+		if (!audioCtx) {
+			WARN("Could not create audio context");
+			return;
+		}
 
 		// Set audio channels
 		audioCtx->channels = channels;
@@ -209,13 +235,13 @@ struct Encoder {
 		else if (format == "mp3") audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
 		else if (format == "opus") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 		else if (format == "mpeg2") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
-		else if (format == "h264") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
+		else if (format == "aac" || format == "h264") audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
 		else if (format == "huffyuv") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 		else if (format == "ffv1") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 		else assert(0);
 
 		// Set bitrate
-		if (format == "mp3" || format == "opus" || format == "mpeg2" || format == "h264") {
+		if (format == "mp3" || format == "aac" || format == "opus" || format == "mpeg2" || format == "h264") {
 			audioCtx->bit_rate = bitRate;
 		}
 
@@ -244,16 +270,22 @@ struct Encoder {
 		// Open audio encoder
 		err = avcodec_open2(audioCtx, audioCodec, NULL);
 		if (err < 0) {
-			printFfmpegError(err);
+			WARN("Could not open audio encoder: %s", getFfmpegError(err).c_str());
 			return;
 		}
 
 		// Create audio stream
 		audioStream = avformat_new_stream(formatCtx, NULL);
-		assert(audioStream);
+		if (!audioStream) {
+			WARN("Could not create audio stream");
+			return;
+		}
 
 		err = avcodec_parameters_from_context(audioStream->codecpar, audioCtx);
-		assert(err >= 0);
+		if (err < 0) {
+			WARN("Could not set audio parameters: %s", getFfmpegError(err).c_str());
+			return;
+		}
 
 		// Create audio frame
 		for (int i = 0; i < AUDIO_FRAME_BUFFER_LEN; i++) {
@@ -278,21 +310,26 @@ struct Encoder {
 		// DEBUG("audio frame nb_samples %d", audioFrames[0]->nb_samples);
 
 		// Video
-		if (format == "mpeg2" || format == "h264" || format == "huffyuv" || format == "ffv1") {
-			// Find video encoder
-			std::string videoEncoderName;
-			if (format == "mpeg2") videoEncoderName = "mpeg2video";
-			else if (format == "h264") videoEncoderName = "h264";
-			else if (format == "huffyuv") videoEncoderName = "huffyuv";
-			else if (format == "ffv1") videoEncoderName = "ffv1";
-			else assert(0);
+		std::string videoEncoderName;
+		if (format == "mpeg2") videoEncoderName = "mpeg2video";
+		else if (format == "h264") videoEncoderName = "libx264";
+		else if (format == "huffyuv") videoEncoderName = "huffyuv";
+		else if (format == "ffv1") videoEncoderName = "ffv1";
 
+		if (videoEncoderName != "") {
+			// Find video encoder
 			videoCodec = avcodec_find_encoder_by_name(videoEncoderName.c_str());
-			assert(videoCodec);
+			if (!videoCodec) {
+				WARN("Could not find encoder %s", videoEncoderName.c_str());
+				return;
+			}
 
 			// Create video encoder
 			videoCtx = avcodec_alloc_context3(videoCodec);
-			assert(videoCtx);
+			if (!videoCtx) {
+				WARN("Could not create video context");
+				return;
+			}
 
 			videoCtx->bit_rate = 20 * 1000 * 1000 * 8;
 			// Round down to nearest even number
@@ -308,14 +345,23 @@ struct Encoder {
 
 			// Open video encoder
 			err = avcodec_open2(videoCtx, videoCodec, NULL);
-			assert(err >= 0);
+			if (err < 0) {
+				WARN("Could not open video encoder: %s", getFfmpegError(err).c_str());
+				return;
+			}
 
 			// Create video stream
 			videoStream = avformat_new_stream(formatCtx, NULL);
-			assert(videoStream);
+			if (!videoStream) {
+				WARN("Could not create video stream");
+				return;
+			}
 
 			err = avcodec_parameters_from_context(videoStream->codecpar, videoCtx);
-			assert(err >= 0);
+			if (err < 0) {
+				WARN("Could not set video parameters: %s", getFfmpegError(err).c_str());
+				return;
+			}
 
 			// Create video frame
 			videoFrame = av_frame_alloc();
@@ -334,14 +380,17 @@ struct Encoder {
 
 			// Create video rescaler
 			sws = sws_getContext(videoCtx->width, videoCtx->height, AV_PIX_FMT_RGBA, videoCtx->width, videoCtx->height, videoCtx->pix_fmt, SWS_POINT, NULL, NULL, NULL);
-			assert(sws);
+			if (!sws) {
+				WARN("Could not create video rescaler");
+				return;
+			}
 
 			// Allocate videoData
 			int videoDataSize = videoCtx->width * videoCtx->height * 4;
 			videoData[0] = new uint8_t[videoDataSize];
 			videoData[1] = new uint8_t[videoDataSize];
-			memset(videoData[0], 0, videoDataSize);
-			memset(videoData[1], 0, videoDataSize);
+			std::memset(videoData[0], 0, videoDataSize);
+			std::memset(videoData[1], 0, videoDataSize);
 		}
 
 		av_dump_format(formatCtx, 0, url.c_str(), true);
@@ -362,7 +411,10 @@ struct Encoder {
 
 		// Write format header to file
 		err = avformat_write_header(formatCtx, NULL);
-		assert(err >= 0);
+		if (err < 0) {
+			WARN("Could not write header to file: %s", getFfmpegError(err).c_str());
+			return;
+		}
 
 		opened = true;
 	}
@@ -832,7 +884,7 @@ struct Recorder : Module {
 		int videoHeight = encoder->getVideoHeight();
 
 		// Fill black pixels
-		memset(videoData, 0, videoWidth * videoHeight * 4);
+		std::memset(videoData, 0, videoWidth * videoHeight * 4);
 
 		// Copy video
 		for (int videoY = 0; videoY < videoHeight; videoY++) {
@@ -840,7 +892,7 @@ struct Recorder : Module {
 			int w = (y < height) ? std::min(width, videoWidth) : 0;
 			// Copy horizontal line
 			if (w > 0)
-				memcpy(&videoData[videoY * videoWidth * 4], &data[y * width * 4], w * 4);
+				std::memcpy(&videoData[videoY * videoWidth * 4], &data[y * width * 4], w * 4);
 		}
 		encoder->flipVideoData();
 	}
@@ -928,7 +980,7 @@ struct Recorder : Module {
 	}
 
 	bool showBitRate() {
-		return (format == "mp3" || format == "opus" || format == "mpeg2");
+		return (format == "mp3" || format == "aac" || format == "opus" || format == "mpeg2" || format == "h264");
 	}
 
 	void setSize(int width, int height) {
@@ -1161,7 +1213,7 @@ struct RecorderWidget : ModuleWidget {
 	void appendContextMenu(Menu *menu) override {
 		Recorder *module = dynamic_cast<Recorder*>(this->module);
 
-		menu->addChild(new MenuEntry);
+		menu->addChild(new MenuSeparator);
 
 		menu->addChild(createMenuLabel("Output file"));
 
@@ -1177,7 +1229,7 @@ struct RecorderWidget : ModuleWidget {
 		incrementPathItem->module = module;
 		menu->addChild(incrementPathItem);
 
-		menu->addChild(new MenuEntry);
+		menu->addChild(new MenuSeparator);
 		menu->addChild(createMenuLabel("Audio formats"));
 
 		for (const std::string &format : AUDIO_FORMATS) {
@@ -1190,7 +1242,7 @@ struct RecorderWidget : ModuleWidget {
 			menu->addChild(formatItem);
 		}
 
-		menu->addChild(new MenuEntry);
+		menu->addChild(new MenuSeparator);
 		menu->addChild(createMenuLabel("Video formats"));
 
 		for (const std::string &format : VIDEO_FORMATS) {
@@ -1203,7 +1255,7 @@ struct RecorderWidget : ModuleWidget {
 			menu->addChild(formatItem);
 		}
 
-		menu->addChild(new MenuEntry);
+		menu->addChild(new MenuSeparator);
 		menu->addChild(createMenuLabel("Encoder settings"));
 
 		// SampleRateItem *sampleRateItem = new SampleRateItem;
@@ -1241,11 +1293,14 @@ struct RecorderWidget : ModuleWidget {
 		module->setSize(width, height);
 
 		if (module->needsVideo()) {
+			// Allocate pixel color buffer
+			const int pixelsAlignment = 32;
+			uint8_t* pixelsUnaligned = new uint8_t[height * width * 4 + pixelsAlignment];
+			uint8_t* pixels = (uint8_t*) ((uintptr_t(pixelsUnaligned) + pixelsAlignment - 1) / pixelsAlignment * pixelsAlignment);
+
 			// glReadPixels defaults to GL_BACK, but the back-buffer is unstable, so use the front buffer (what the user sees)
 			glReadBuffer(GL_FRONT);
-			// Get pixel color data
-			uint8_t *data = new uint8_t[height * width * 4];
-			glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, data);
+			glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
 
 			if (cursor && glfwGetInputMode(APP->window->win, GLFW_CURSOR) == GLFW_CURSOR_NORMAL) {
 				// Get mouse position
@@ -1258,12 +1313,12 @@ struct RecorderWidget : ModuleWidget {
 				cursorY -= 3;
 
 				// Draw cursor
-				blitRGBA(data, width, height, width * 4, cursor, cursorWidth, cursorHeight, cursorWidth * 4, cursorX, height - cursorY - cursorHeight);
+				blitRGBA(pixels, width, height, width * 4, cursor, cursorWidth, cursorHeight, cursorWidth * 4, cursorX, height - cursorY - cursorHeight);
 			}
 
-			module->writeVideo(data, width, height);
+			module->writeVideo(pixels, width, height);
 
-			delete[] data;
+			delete[] pixelsUnaligned;
 		}
 	}
 };
