@@ -25,23 +25,23 @@ static std::string getFfmpegError(int err) {
 }
 
 
-static void blitRGBA(uint8_t *dst, int dstWidth, int dstHeight, int dstStride, const uint8_t *src, int srcWidth, int srcHeight, int srcStride, int x, int y) {
+static void blitRGBA(uint8_t* dst, int dstWidth, int dstHeight, int dstStride, const uint8_t* src, int srcWidth, int srcHeight, int srcStride, int x, int y) {
 	for (int srcY = 0; srcY < srcHeight; srcY++) {
 		int dstY = y + srcY;
 		if (0 <= dstY && dstY < dstHeight)
-		for (int srcX = 0; srcX < srcWidth; srcX++) {
-			int dstX = x + srcX;
-			if (0 <= dstX && dstX < dstWidth) {
-				float srcAlpha = (float) src[srcY * srcStride + srcX * 4 + 3] / 255;
-				for (int c = 0; c < 3; c++) {
-					float dstC = (float) dst[dstY * dstStride + dstX * 4 + c] / 255;
-					float srcC = (float) src[srcY * srcStride + srcX * 4 + c] / 255;
-					// Assume destination alpha is 255 to make the composition algorithm trivial.
-					dstC = dstC * (1.f - srcAlpha) + srcC * srcAlpha;
-					dst[dstY * dstStride + dstX * 4 + c] = 255 * clamp(dstC, 0.f, 1.f);
+			for (int srcX = 0; srcX < srcWidth; srcX++) {
+				int dstX = x + srcX;
+				if (0 <= dstX && dstX < dstWidth) {
+					float srcAlpha = (float) src[srcY * srcStride + srcX * 4 + 3] / 255;
+					for (int c = 0; c < 3; c++) {
+						float dstC = (float) dst[dstY * dstStride + dstX * 4 + c] / 255;
+						float srcC = (float) src[srcY * srcStride + srcX * 4 + c] / 255;
+						// Assume destination alpha is 255 to make the composition algorithm trivial.
+						dstC = dstC * (1.f - srcAlpha) + srcC * srcAlpha;
+						dst[dstY * dstStride + dstX * 4 + c] = 255 * clamp(dstC, 0.f, 1.f);
+					}
 				}
 			}
-		}
 	}
 }
 
@@ -105,13 +105,13 @@ struct Encoder {
 	std::mutex mainMutex;
 	std::condition_variable mainCv;
 
-	AVFormatContext *formatCtx = NULL;
-	AVIOContext *io = NULL;
+	AVFormatContext* formatCtx = NULL;
+	AVIOContext* io = NULL;
 
-	AVCodec *audioCodec = NULL;
-	AVCodecContext *audioCtx = NULL;
-	AVStream *audioStream = NULL;
-	AVFrame *audioFrames[AUDIO_FRAME_BUFFER_LEN] = {};
+	AVCodec* audioCodec = NULL;
+	AVCodecContext* audioCtx = NULL;
+	AVStream* audioStream = NULL;
+	AVFrame* audioFrames[AUDIO_FRAME_BUFFER_LEN] = {};
 	/** Number of audio samples written */
 	int64_t audioSampleIndex = 0;
 	/** Number of audio samples written to the current audio frame */
@@ -119,14 +119,14 @@ struct Encoder {
 	int64_t audioFrameIndex = 0;
 	int64_t workerAudioFrameIndex = 0;
 
-	AVCodec *videoCodec = NULL;
-	AVCodecContext *videoCtx = NULL;
-	AVStream *videoStream = NULL;
-	AVFrame *videoFrame = NULL;
-	struct SwsContext *sws = NULL;
+	AVCodec* videoCodec = NULL;
+	AVCodecContext* videoCtx = NULL;
+	AVStream* videoStream = NULL;
+	AVFrame* videoFrame = NULL;
+	struct SwsContext* sws = NULL;
 
 	// Double buffer of RGBA8888 video data
-	uint8_t *videoData[2] = {};
+	uint8_t* videoData[2] = {};
 	std::atomic<int> videoDataIndex{0};
 
 	~Encoder() {
@@ -190,7 +190,7 @@ struct Encoder {
 		else if (format == "mp3") audioEncoderName = "libmp3lame";
 		else if (format == "aac") audioEncoderName = "aac";
 		else if (format == "opus") audioEncoderName = "libopus";
-		else if (format == "mpeg2" ) audioEncoderName = "mp2";
+		else if (format == "mpeg2") audioEncoderName = "mp2";
 		else if (format == "h264") audioEncoderName = "aac";
 		else if (format == "huffyuv") audioEncoderName = "pcm_s16le";
 		else if (format == "ffv1") audioEncoderName = "pcm_s16le";
@@ -247,7 +247,7 @@ struct Encoder {
 
 		// Check sample rate
 		bool validSampleRate = false;
-		for (const int *p = audioCodec->supported_samplerates; p && *p != 0; p++) {
+		for (const int* p = audioCodec->supported_samplerates; p && *p != 0; p++) {
 			if (sampleRate == *p) {
 				validSampleRate = true;
 				break;
@@ -395,19 +395,19 @@ struct Encoder {
 
 		av_dump_format(formatCtx, 0, url.c_str(), true);
 
-		#if 0
+#if 0
 		if (videoCodec) {
 			// Supported framerates
-			for (const AVRational *x = videoCodec->supported_framerates; x && x->num != 0; x++) {
+			for (const AVRational* x = videoCodec->supported_framerates; x && x->num != 0; x++) {
 				DEBUG("framerate: %d/%d", x->num, x->den);
 			}
 
 			// Supported pixel formats
-			for (const enum AVPixelFormat *x = videoCodec->pix_fmts; x && *x != -1; x++) {
+			for (const enum AVPixelFormat* x = videoCodec->pix_fmts; x && *x != -1; x++) {
 				DEBUG("pixel format: %d", *x);
 			}
 		}
-		#endif
+#endif
 
 		// Write format header to file
 		err = avformat_write_header(formatCtx, NULL);
@@ -475,7 +475,7 @@ struct Encoder {
 	/** `input` must be `audioCtx->channels` length.
 	Called by the main thread.
 	*/
-	void writeAudio(float *input) {
+	void writeAudio(float* input) {
 		if (!audioCtx)
 			return;
 
@@ -490,35 +490,35 @@ struct Encoder {
 
 		// Set output
 		if (audioCtx->sample_fmt == AV_SAMPLE_FMT_FLTP) {
-			float **output = (float**) audioFrame->data;
+			float** output = (float**) audioFrame->data;
 			for (int c = 0; c < audioCtx->channels; c++) {
 				float v = clamp(input[c], -1.f, 1.f);
 				output[c][audioFrameSampleIndex] = v;
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S16) {
-			int16_t **output = (int16_t**) audioFrame->data;
+			int16_t** output = (int16_t**) audioFrame->data;
 			for (int c = 0; c < audioCtx->channels; c++) {
 				float v = clamp(input[c], -1.f, 1.f);
 				output[0][audioFrameSampleIndex * audioCtx->channels + c] = (int16_t) std::round(v * 0x7fff);
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S32) {
-			int32_t **output = (int32_t**) audioFrame->data;
+			int32_t** output = (int32_t**) audioFrame->data;
 			for (int c = 0; c < audioCtx->channels; c++) {
 				float v = clamp(input[c], -1.f, 1.f);
 				output[0][audioFrameSampleIndex * audioCtx->channels + c] = (int32_t) std::round(v * 0x7fffffff);
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S16P) {
-			int16_t **output = (int16_t**) audioFrame->data;
+			int16_t** output = (int16_t**) audioFrame->data;
 			for (int c = 0; c < audioCtx->channels; c++) {
 				float v = clamp(input[c], -1.f, 1.f);
 				output[c][audioFrameSampleIndex] = (int16_t) std::round(v * 0x7fff);
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S32P) {
-			int32_t **output = (int32_t**) audioFrame->data;
+			int32_t** output = (int32_t**) audioFrame->data;
 			for (int c = 0; c < audioCtx->channels; c++) {
 				float v = clamp(input[c], -1.f, 1.f);
 				output[c][audioFrameSampleIndex] = (int32_t) std::round(v * 0x7fffffff);
@@ -550,7 +550,7 @@ struct Encoder {
 			return;
 		assert(videoFrame);
 
-		uint8_t *videoData = getConsumerVideoData();
+		uint8_t* videoData = getConsumerVideoData();
 		if (!videoData)
 			return;
 
@@ -566,11 +566,11 @@ struct Encoder {
 		videoFrame->pts++;
 	}
 
-	uint8_t *getProducerVideoData() {
+	uint8_t* getProducerVideoData() {
 		return videoData[videoDataIndex];
 	}
 
-	uint8_t *getConsumerVideoData() {
+	uint8_t* getConsumerVideoData() {
 		return videoData[!videoDataIndex];
 	}
 
@@ -590,7 +590,7 @@ struct Encoder {
 		return videoCtx->height;
 	}
 
-	void flushFrame(AVCodecContext *ctx, AVStream *stream, AVFrame *frame) {
+	void flushFrame(AVCodecContext* ctx, AVStream* stream, AVFrame* frame) {
 		int err;
 		assert(formatCtx);
 
@@ -683,7 +683,7 @@ struct Recorder : Module {
 	dsp::SchmittTrigger trigTrigger;
 	dsp::VuMeter2 vuMeter[2];
 	dsp::ClockDivider lightDivider;
-	Encoder *encoder = NULL;
+	Encoder* encoder = NULL;
 	std::mutex encoderMutex;
 
 	// Settings. Copied to Encoder when created.
@@ -730,8 +730,8 @@ struct Recorder : Module {
 		stop();
 	}
 
-	json_t *dataToJson() override {
-		json_t *rootJ = json_object();
+	json_t* dataToJson() override {
+		json_t* rootJ = json_object();
 		json_object_set_new(rootJ, "format", json_string(format.c_str()));
 		json_object_set_new(rootJ, "path", json_string(path.c_str()));
 		json_object_set_new(rootJ, "incrementPath", json_boolean(incrementPath));
@@ -741,33 +741,33 @@ struct Recorder : Module {
 		return rootJ;
 	}
 
-	void dataFromJson(json_t *rootJ) override {
-		json_t *formatJ = json_object_get(rootJ, "format");
+	void dataFromJson(json_t* rootJ) override {
+		json_t* formatJ = json_object_get(rootJ, "format");
 		if (formatJ)
 			setFormat(json_string_value(formatJ));
 
-		json_t *pathJ = json_object_get(rootJ, "path");
+		json_t* pathJ = json_object_get(rootJ, "path");
 		if (pathJ)
 			setPath(json_string_value(pathJ));
 
-		json_t *incrementPathJ = json_object_get(rootJ, "incrementPath");
+		json_t* incrementPathJ = json_object_get(rootJ, "incrementPath");
 		if (incrementPathJ)
 			incrementPath = json_boolean_value(incrementPathJ);
 
-		json_t *sampleRateJ = json_object_get(rootJ, "sampleRate");
+		json_t* sampleRateJ = json_object_get(rootJ, "sampleRate");
 		if (sampleRateJ)
 			setSampleRate(json_integer_value(sampleRateJ));
 
-		json_t *depthJ = json_object_get(rootJ, "depth");
+		json_t* depthJ = json_object_get(rootJ, "depth");
 		if (depthJ)
 			setDepth(json_integer_value(depthJ));
 
-		json_t *bitRateJ = json_object_get(rootJ, "bitRate");
+		json_t* bitRateJ = json_object_get(rootJ, "bitRate");
 		if (bitRateJ)
 			setBitRate(json_integer_value(bitRateJ));
 	}
 
-	void process(const ProcessArgs &args) override {
+	void process(const ProcessArgs& args) override {
 		if (gateDivider.process()) {
 			// Recording state
 			bool gate = isRecording();
@@ -872,11 +872,11 @@ struct Recorder : Module {
 		return !!encoder;
 	}
 
-	void writeVideo(uint8_t *data, int width, int height) {
+	void writeVideo(uint8_t* data, int width, int height) {
 		std::lock_guard<std::mutex> lock(encoderMutex);
 		if (!encoder)
 			return;
-		uint8_t *videoData = encoder->getProducerVideoData();
+		uint8_t* videoData = encoder->getProducerVideoData();
 		if (!videoData)
 			return;
 
@@ -998,7 +998,7 @@ struct Recorder : Module {
 ////////////////////
 
 
-static void selectPath(Recorder *module) {
+static void selectPath(Recorder* module) {
 	std::string dir;
 	std::string filename;
 	if (module->path != "") {
@@ -1010,7 +1010,7 @@ static void selectPath(Recorder *module) {
 		filename = "Untitled";
 	}
 
-	char *path = osdialog_file(OSDIALOG_SAVE, dir.c_str(), filename.c_str(), NULL);
+	char* path = osdialog_file(OSDIALOG_SAVE, dir.c_str(), filename.c_str(), NULL);
 	if (path) {
 		module->setPath(path);
 		free(path);
@@ -1030,8 +1030,8 @@ struct RecButton : SvgSwitch {
 		addFrame(APP->window->loadSvg(asset::plugin(pluginInstance, "res/RecButton.svg")));
 	}
 
-	void onDragStart(const event::DragStart &e) override {
-		Recorder *module = dynamic_cast<Recorder*>(paramQuantity->module);
+	void onDragStart(const event::DragStart& e) override {
+		Recorder* module = dynamic_cast<Recorder*>(paramQuantity->module);
 		if (module && module->path == "")
 			selectPath(module);
 
@@ -1049,45 +1049,45 @@ struct RecLight : RedLight {
 
 
 struct PathItem : MenuItem {
-	Recorder *module;
-	void onAction(const event::Action &e) override {
+	Recorder* module;
+	void onAction(const event::Action& e) override {
 		selectPath(module);
 	}
 };
 
 
 struct IncrementPathItem : MenuItem {
-	Recorder *module;
-	void onAction(const event::Action &e) override {
+	Recorder* module;
+	void onAction(const event::Action& e) override {
 		module->incrementPath ^= true;
 	}
 };
 
 
 struct FormatItem : MenuItem {
-	Recorder *module;
+	Recorder* module;
 	std::string format;
-	void onAction(const event::Action &e) override {
+	void onAction(const event::Action& e) override {
 		module->setFormat(format);
 	}
 };
 
 
 struct SampleRateValueItem : MenuItem {
-	Recorder *module;
+	Recorder* module;
 	int sampleRate;
-	void onAction(const event::Action &e) override {
+	void onAction(const event::Action& e) override {
 		module->setSampleRate(sampleRate);
 	}
 };
 
 
 struct SampleRateItem : MenuItem {
-	Recorder *module;
-	Menu *createChildMenu() override {
-		Menu *menu = new Menu;
+	Recorder* module;
+	Menu* createChildMenu() override {
+		Menu* menu = new Menu;
 		for (int sampleRate : module->getSampleRates()) {
-			SampleRateValueItem *item = new SampleRateValueItem;
+			SampleRateValueItem* item = new SampleRateValueItem;
 			item->text = string::f("%g kHz", sampleRate / 1000.0);
 			item->rightText = CHECKMARK(module->sampleRate == sampleRate);
 			item->module = module;
@@ -1100,20 +1100,20 @@ struct SampleRateItem : MenuItem {
 
 
 struct DepthValueItem : MenuItem {
-	Recorder *module;
+	Recorder* module;
 	int depth;
-	void onAction(const event::Action &e) override {
+	void onAction(const event::Action& e) override {
 		module->setDepth(depth);
 	}
 };
 
 
 struct DepthItem : MenuItem {
-	Recorder *module;
-	Menu *createChildMenu() override {
-		Menu *menu = new Menu;
+	Recorder* module;
+	Menu* createChildMenu() override {
+		Menu* menu = new Menu;
 		for (int depth : module->getDepths()) {
-			DepthValueItem *item = new DepthValueItem;
+			DepthValueItem* item = new DepthValueItem;
 			item->text = string::f("%d bit", depth);
 			item->rightText = CHECKMARK(module->depth == depth);
 			item->module = module;
@@ -1126,20 +1126,20 @@ struct DepthItem : MenuItem {
 
 
 struct BitRateValueItem : MenuItem {
-	Recorder *module;
+	Recorder* module;
 	int bitRate;
-	void onAction(const event::Action &e) override {
+	void onAction(const event::Action& e) override {
 		module->setBitRate(bitRate);
 	}
 };
 
 
 struct BitRateItem : MenuItem {
-	Recorder *module;
-	Menu *createChildMenu() override {
-		Menu *menu = new Menu;
+	Recorder* module;
+	Menu* createChildMenu() override {
+		Menu* menu = new Menu;
 		for (int bitRate : module->getBitRates()) {
-			BitRateValueItem *item = new BitRateValueItem;
+			BitRateValueItem* item = new BitRateValueItem;
 			item->text = string::f("%d kbps", bitRate / 1000);
 			item->rightText = CHECKMARK(module->bitRate == bitRate);
 			item->module = module;
@@ -1157,10 +1157,10 @@ struct BitRateItem : MenuItem {
 
 
 struct RecorderWidget : ModuleWidget {
-	uint8_t *cursor = NULL;
+	uint8_t* cursor = NULL;
 	int cursorWidth, cursorHeight, cursorComp;
 
-	RecorderWidget(Recorder *module) {
+	RecorderWidget(Recorder* module) {
 		setModule(module);
 		setPanel(APP->window->loadSvg(asset::plugin(pluginInstance, "res/Recorder.svg")));
 
@@ -1210,20 +1210,20 @@ struct RecorderWidget : ModuleWidget {
 			free(cursor);
 	}
 
-	void appendContextMenu(Menu *menu) override {
-		Recorder *module = dynamic_cast<Recorder*>(this->module);
+	void appendContextMenu(Menu* menu) override {
+		Recorder* module = dynamic_cast<Recorder*>(this->module);
 
 		menu->addChild(new MenuSeparator);
 
 		menu->addChild(createMenuLabel("Output file"));
 
-		PathItem *pathItem = new PathItem;
+		PathItem* pathItem = new PathItem;
 		std::string path = string::ellipsizePrefix(module->path, 30);
 		pathItem->text = (path != "") ? path : "Select...";
 		pathItem->module = module;
 		menu->addChild(pathItem);
 
-		IncrementPathItem *incrementPathItem = new IncrementPathItem;
+		IncrementPathItem* incrementPathItem = new IncrementPathItem;
 		incrementPathItem->text = "Append -001, -002, etc.";
 		incrementPathItem->rightText = CHECKMARK(module->incrementPath);
 		incrementPathItem->module = module;
@@ -1232,9 +1232,9 @@ struct RecorderWidget : ModuleWidget {
 		menu->addChild(new MenuSeparator);
 		menu->addChild(createMenuLabel("Audio formats"));
 
-		for (const std::string &format : AUDIO_FORMATS) {
-			const FormatInfo &fi = FORMAT_INFO.at(format);
-			FormatItem *formatItem = new FormatItem;
+		for (const std::string& format : AUDIO_FORMATS) {
+			const FormatInfo& fi = FORMAT_INFO.at(format);
+			FormatItem* formatItem = new FormatItem;
 			formatItem->text = fi.name + " (." + fi.extension + ")";
 			formatItem->rightText = CHECKMARK(format == module->format);
 			formatItem->module = module;
@@ -1245,9 +1245,9 @@ struct RecorderWidget : ModuleWidget {
 		menu->addChild(new MenuSeparator);
 		menu->addChild(createMenuLabel("Video formats"));
 
-		for (const std::string &format : VIDEO_FORMATS) {
-			const FormatInfo &fi = FORMAT_INFO.at(format);
-			FormatItem *formatItem = new FormatItem;
+		for (const std::string& format : VIDEO_FORMATS) {
+			const FormatInfo& fi = FORMAT_INFO.at(format);
+			FormatItem* formatItem = new FormatItem;
 			formatItem->text = fi.name + " (." + fi.extension + ")";
 			formatItem->rightText = CHECKMARK(format == module->format);
 			formatItem->module = module;
@@ -1265,7 +1265,7 @@ struct RecorderWidget : ModuleWidget {
 		// menu->addChild(sampleRateItem);
 
 		if (module->showDepth()) {
-			DepthItem *depthItem = new DepthItem;
+			DepthItem* depthItem = new DepthItem;
 			depthItem->text = "Bit depth";
 			depthItem->rightText = RIGHT_ARROW;
 			depthItem->module = module;
@@ -1273,7 +1273,7 @@ struct RecorderWidget : ModuleWidget {
 		}
 
 		if (module->showBitRate()) {
-			BitRateItem *bitRateItem = new BitRateItem;
+			BitRateItem* bitRateItem = new BitRateItem;
 			bitRateItem->text = "Bit rate";
 			bitRateItem->rightText = RIGHT_ARROW;
 			bitRateItem->module = module;
@@ -1285,7 +1285,7 @@ struct RecorderWidget : ModuleWidget {
 		ModuleWidget::step();
 		if (!this->module)
 			return;
-		Recorder *module = dynamic_cast<Recorder*>(this->module);
+		Recorder* module = dynamic_cast<Recorder*>(this->module);
 
 		// Get size even if video is not requested, so the size can be set when video starts recording.
 		int width, height;
@@ -1296,7 +1296,7 @@ struct RecorderWidget : ModuleWidget {
 			// Allocate pixel color buffer
 			const int pixelsAlignment = 32;
 			uint8_t* pixelsUnaligned = new uint8_t[height * width * 4 + pixelsAlignment];
-			uint8_t* pixels = (uint8_t*) ((uintptr_t(pixelsUnaligned) + pixelsAlignment - 1) / pixelsAlignment * pixelsAlignment);
+			uint8_t* pixels = (uint8_t*)((uintptr_t(pixelsUnaligned) + pixelsAlignment - 1) / pixelsAlignment * pixelsAlignment);
 
 			// glReadPixels defaults to GL_BACK, but the back-buffer is unstable, so use the front buffer (what the user sees)
 			glReadBuffer(GL_FRONT);
@@ -1324,4 +1324,4 @@ struct RecorderWidget : ModuleWidget {
 };
 
 
-Model *modelRecorder = createModel<Recorder, RecorderWidget>("Recorder");
+Model* modelRecorder = createModel<Recorder, RecorderWidget>("Recorder");
