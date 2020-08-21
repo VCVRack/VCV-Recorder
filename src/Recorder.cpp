@@ -82,7 +82,7 @@ static const std::map<std::string, FormatInfo> FORMAT_INFO = {
 	{"alac", {"ALAC", "m4a"}},
 	{"mp3", {"MP3", "mp3"}},
 	{"aac", {"AAC", "m4a"}},
-	{"opus", {"Opus", "opus"}},
+	{"opus", {"Opus (48 kHz only)", "opus"}},
 	{"mpeg2", {"MPEG-2", "mpg"}},
 	{"h264", {"H.264", "mp4"}},
 	{"huffyuv", {"HuffYUV (lossless)", "avi"}},
@@ -134,7 +134,7 @@ struct Encoder {
 		close();
 	}
 
-	void open(std::string format, std::string path, int channels, int sampleRate, int depth, int bitRate, int width, int height) {
+	void open(std::string format, std::string path, int channels, int sampleRate, int depth, int bitRate, int videoBitRate, int width, int height) {
 		int err;
 		// This method can only be called once per instance.
 		assert(!initialized);
@@ -246,17 +246,20 @@ struct Encoder {
 		}
 
 		// Check sample rate
-		bool validSampleRate = false;
-		for (const int* p = audioCodec->supported_samplerates; p && *p != 0; p++) {
-			if (sampleRate == *p) {
-				validSampleRate = true;
-				break;
-			}
-		}
-		if (!validSampleRate) {
-			WARN("Sample rate %d not supported by codec", sampleRate);
-			return;
-		}
+		// This is disabled because WAV, AIFF, etc work with all sample rates instead of having a list of valid ones.
+		// If the sample rate is invalid, the avcodec_open2() will gracefully fail below.
+
+		// bool validSampleRate = false;
+		// for (const int* p = audioCodec->supported_samplerates; p && *p != 0; p++) {
+		// 	if (sampleRate == *p) {
+		// 		validSampleRate = true;
+		// 		break;
+		// 	}
+		// }
+		// if (!validSampleRate) {
+		// 	WARN("Sample rate %d not supported by codec", sampleRate);
+		// 	return;
+		// }
 
 		// Set sample rate
 		audioCtx->sample_rate = sampleRate;
@@ -331,7 +334,7 @@ struct Encoder {
 				return;
 			}
 
-			videoCtx->bit_rate = 20 * 1000 * 1000 * 8;
+			videoCtx->bit_rate = videoBitRate;
 			// Round down to nearest even number
 			videoCtx->width = (width / 2) * 2;
 			videoCtx->height = (height / 2) * 2;
@@ -696,6 +699,7 @@ struct Recorder : Module {
 	int sampleRate;
 	int depth;
 	int bitRate;
+	int videoBitRate;
 	int width, height;
 
 	Recorder() {
@@ -722,7 +726,8 @@ struct Recorder : Module {
 		channels = 2;
 		sampleRate = 44100;
 		depth = 16;
-		bitRate = 256000;
+		bitRate = 256 * 1000;
+		videoBitRate = (1 << 11) * 1000;
 		width = height = 0;
 	}
 
@@ -738,6 +743,7 @@ struct Recorder : Module {
 		json_object_set_new(rootJ, "sampleRate", json_integer(sampleRate));
 		json_object_set_new(rootJ, "depth", json_integer(depth));
 		json_object_set_new(rootJ, "bitRate", json_integer(bitRate));
+		json_object_set_new(rootJ, "videoBitRate", json_integer(videoBitRate));
 		return rootJ;
 	}
 
@@ -765,6 +771,10 @@ struct Recorder : Module {
 		json_t* bitRateJ = json_object_get(rootJ, "bitRate");
 		if (bitRateJ)
 			setBitRate(json_integer_value(bitRateJ));
+
+		json_t* videoBitRateJ = json_object_get(rootJ, "videoBitRate");
+		if (videoBitRateJ)
+			setVideoBitRate(json_integer_value(videoBitRateJ));
 	}
 
 	void process(const ProcessArgs& args) override {
@@ -851,7 +861,7 @@ struct Recorder : Module {
 		}
 
 		encoder = new Encoder;
-		encoder->open(format, newPath, channels, sampleRate, depth, bitRate, width, height);
+		encoder->open(format, newPath, channels, sampleRate, depth, bitRate, videoBitRate, width, height);
 		if (!encoder->isOpen()) {
 			delete encoder;
 			encoder = NULL;
@@ -961,7 +971,7 @@ struct Recorder : Module {
 		return {16, 24};
 	}
 
-	bool showDepth() {
+	bool isDepthShown() {
 		return (format == "wav" || format == "aiff" || format == "flac" || format == "alac");
 	}
 
@@ -979,8 +989,27 @@ struct Recorder : Module {
 		return bitRates;
 	}
 
-	bool showBitRate() {
+	bool isBitRateShown() {
 		return (format == "mp3" || format == "aac" || format == "opus" || format == "mpeg2" || format == "h264");
+	}
+
+	void setVideoBitRate(int videoBitRate) {
+		if (this->videoBitRate == videoBitRate)
+			return;
+		stop();
+		this->videoBitRate = videoBitRate;
+	}
+
+	std::vector<int> getVideoBitRates() {
+		std::vector<int> videoBitRates;
+		for (int i = 9; i <= 16; i++) {
+			videoBitRates.push_back((1 << i) * 1000);
+		}
+		return videoBitRates;
+	}
+
+	bool isVideoBitRateShown() {
+		return (format == "mpeg2" || format == "h264");
 	}
 
 	void setSize(int width, int height) {
@@ -1048,109 +1077,6 @@ struct RecLight : RedLight {
 };
 
 
-struct PathItem : MenuItem {
-	Recorder* module;
-	void onAction(const event::Action& e) override {
-		selectPath(module);
-	}
-};
-
-
-struct IncrementPathItem : MenuItem {
-	Recorder* module;
-	void onAction(const event::Action& e) override {
-		module->incrementPath ^= true;
-	}
-};
-
-
-struct FormatItem : MenuItem {
-	Recorder* module;
-	std::string format;
-	void onAction(const event::Action& e) override {
-		module->setFormat(format);
-	}
-};
-
-
-struct SampleRateValueItem : MenuItem {
-	Recorder* module;
-	int sampleRate;
-	void onAction(const event::Action& e) override {
-		module->setSampleRate(sampleRate);
-	}
-};
-
-
-struct SampleRateItem : MenuItem {
-	Recorder* module;
-	Menu* createChildMenu() override {
-		Menu* menu = new Menu;
-		for (int sampleRate : module->getSampleRates()) {
-			SampleRateValueItem* item = new SampleRateValueItem;
-			item->text = string::f("%g kHz", sampleRate / 1000.0);
-			item->rightText = CHECKMARK(module->sampleRate == sampleRate);
-			item->module = module;
-			item->sampleRate = sampleRate;
-			menu->addChild(item);
-		}
-		return menu;
-	}
-};
-
-
-struct DepthValueItem : MenuItem {
-	Recorder* module;
-	int depth;
-	void onAction(const event::Action& e) override {
-		module->setDepth(depth);
-	}
-};
-
-
-struct DepthItem : MenuItem {
-	Recorder* module;
-	Menu* createChildMenu() override {
-		Menu* menu = new Menu;
-		for (int depth : module->getDepths()) {
-			DepthValueItem* item = new DepthValueItem;
-			item->text = string::f("%d bit", depth);
-			item->rightText = CHECKMARK(module->depth == depth);
-			item->module = module;
-			item->depth = depth;
-			menu->addChild(item);
-		}
-		return menu;
-	}
-};
-
-
-struct BitRateValueItem : MenuItem {
-	Recorder* module;
-	int bitRate;
-	void onAction(const event::Action& e) override {
-		module->setBitRate(bitRate);
-	}
-};
-
-
-struct BitRateItem : MenuItem {
-	Recorder* module;
-	Menu* createChildMenu() override {
-		Menu* menu = new Menu;
-		for (int bitRate : module->getBitRates()) {
-			BitRateValueItem* item = new BitRateValueItem;
-			item->text = string::f("%d kbps", bitRate / 1000);
-			item->rightText = CHECKMARK(module->bitRate == bitRate);
-			item->module = module;
-			item->bitRate = bitRate;
-			menu->addChild(item);
-		}
-		return menu;
-	}
-};
-
-
 ////////////////////
 // ModuleWidgets
 ////////////////////
@@ -1214,14 +1140,27 @@ struct RecorderWidget : ModuleWidget {
 		Recorder* module = dynamic_cast<Recorder*>(this->module);
 
 		menu->addChild(new MenuSeparator);
-
 		menu->addChild(createMenuLabel("Output file"));
+
+		struct PathItem : MenuItem {
+			Recorder* module;
+			void onAction(const event::Action& e) override {
+				selectPath(module);
+			}
+		};
 
 		PathItem* pathItem = new PathItem;
 		std::string path = string::ellipsizePrefix(module->path, 30);
 		pathItem->text = (path != "") ? path : "Select...";
 		pathItem->module = module;
 		menu->addChild(pathItem);
+
+		struct IncrementPathItem : MenuItem {
+			Recorder* module;
+			void onAction(const event::Action& e) override {
+				module->incrementPath ^= true;
+			}
+		};
 
 		IncrementPathItem* incrementPathItem = new IncrementPathItem;
 		incrementPathItem->text = "Append -001, -002, etc.";
@@ -1231,6 +1170,14 @@ struct RecorderWidget : ModuleWidget {
 
 		menu->addChild(new MenuSeparator);
 		menu->addChild(createMenuLabel("Audio formats"));
+
+		struct FormatItem : MenuItem {
+			Recorder* module;
+			std::string format;
+			void onAction(const event::Action& e) override {
+				module->setFormat(format);
+			}
+		};
 
 		for (const std::string& format : AUDIO_FORMATS) {
 			const FormatInfo& fi = FORMAT_INFO.at(format);
@@ -1258,13 +1205,61 @@ struct RecorderWidget : ModuleWidget {
 		menu->addChild(new MenuSeparator);
 		menu->addChild(createMenuLabel("Encoder settings"));
 
+		struct SampleRateValueItem : MenuItem {
+			Recorder* module;
+			int sampleRate;
+			void onAction(const event::Action& e) override {
+				module->setSampleRate(sampleRate);
+			}
+		};
+
+		struct SampleRateItem : MenuItem {
+			Recorder* module;
+			Menu* createChildMenu() override {
+				Menu* menu = new Menu;
+				for (int sampleRate : module->getSampleRates()) {
+					SampleRateValueItem* item = new SampleRateValueItem;
+					item->text = string::f("%g kHz", sampleRate / 1000.0);
+					item->rightText = CHECKMARK(module->sampleRate == sampleRate);
+					item->module = module;
+					item->sampleRate = sampleRate;
+					menu->addChild(item);
+				}
+				return menu;
+			}
+		};
+
 		// SampleRateItem *sampleRateItem = new SampleRateItem;
 		// sampleRateItem->text = "Sample rate";
 		// sampleRateItem->rightText = RIGHT_ARROW;
 		// sampleRateItem->module = module;
 		// menu->addChild(sampleRateItem);
 
-		if (module->showDepth()) {
+		struct DepthValueItem : MenuItem {
+			Recorder* module;
+			int depth;
+			void onAction(const event::Action& e) override {
+				module->setDepth(depth);
+			}
+		};
+
+		struct DepthItem : MenuItem {
+			Recorder* module;
+			Menu* createChildMenu() override {
+				Menu* menu = new Menu;
+				for (int depth : module->getDepths()) {
+					DepthValueItem* item = new DepthValueItem;
+					item->text = string::f("%d bit", depth);
+					item->rightText = CHECKMARK(module->depth == depth);
+					item->module = module;
+					item->depth = depth;
+					menu->addChild(item);
+				}
+				return menu;
+			}
+		};
+
+		if (module->isDepthShown()) {
 			DepthItem* depthItem = new DepthItem;
 			depthItem->text = "Bit depth";
 			depthItem->rightText = RIGHT_ARROW;
@@ -1272,9 +1267,65 @@ struct RecorderWidget : ModuleWidget {
 			menu->addChild(depthItem);
 		}
 
-		if (module->showBitRate()) {
+		struct BitRateValueItem : MenuItem {
+			Recorder* module;
+			int bitRate;
+			void onAction(const event::Action& e) override {
+				module->setBitRate(bitRate);
+			}
+		};
+
+		struct BitRateItem : MenuItem {
+			Recorder* module;
+			Menu* createChildMenu() override {
+				Menu* menu = new Menu;
+				for (int bitRate : module->getBitRates()) {
+					BitRateValueItem* item = new BitRateValueItem;
+					item->text = string::f("%.0d kbps", bitRate / 1000);
+					item->rightText = CHECKMARK(module->bitRate == bitRate);
+					item->module = module;
+					item->bitRate = bitRate;
+					menu->addChild(item);
+				}
+				return menu;
+			}
+		};
+
+		if (module->isBitRateShown()) {
 			BitRateItem* bitRateItem = new BitRateItem;
-			bitRateItem->text = "Bit rate";
+			bitRateItem->text = "Audio bit rate";
+			bitRateItem->rightText = RIGHT_ARROW;
+			bitRateItem->module = module;
+			menu->addChild(bitRateItem);
+		}
+
+		struct VideoBitRateValueItem : MenuItem {
+			Recorder* module;
+			int videoBitRate;
+			void onAction(const event::Action& e) override {
+				module->setVideoBitRate(videoBitRate);
+			}
+		};
+
+		struct VideoBitRateItem : MenuItem {
+			Recorder* module;
+			Menu* createChildMenu() override {
+				Menu* menu = new Menu;
+				for (int videoBitRate : module->getVideoBitRates()) {
+					VideoBitRateValueItem* item = new VideoBitRateValueItem;
+					item->text = string::f("%.0d kbps", videoBitRate / 1000);
+					item->rightText = CHECKMARK(module->videoBitRate == videoBitRate);
+					item->module = module;
+					item->videoBitRate = videoBitRate;
+					menu->addChild(item);
+				}
+				return menu;
+			}
+		};
+
+		if (module->isVideoBitRateShown()) {
+			VideoBitRateItem* bitRateItem = new VideoBitRateItem;
+			bitRateItem->text = "Video bit rate";
 			bitRateItem->rightText = RIGHT_ARROW;
 			bitRateItem->module = module;
 			menu->addChild(bitRateItem);
