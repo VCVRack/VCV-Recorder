@@ -95,7 +95,8 @@ $(libopus):
 	$(WGET) "https://archive.mozilla.org/pub/opus/opus-1.3.1.tar.gz"
 	$(SHA256) opus-1.3.1.tar.gz 65b58e1e25b2a114157014736a3d9dfeaad8d41be1c8179866f144a2fb44ff9d
 	cd dep && $(UNTAR) ../opus-1.3.1.tar.gz
-	cd dep/opus-1.3.1 && $(CONFIGURE) --enable-shared=no --enable-static=yes --disable-extra-programs
+	# For some reason, we need to manually specify PIC on Windows. `--with-pic` doesn't seem to work.
+	cd dep/opus-1.3.1 && CFLAGS="-fPIC" $(CONFIGURE) --enable-shared=no --enable-static=yes --disable-extra-programs
 	cd dep/opus-1.3.1 && $(MAKE) install
 
 
