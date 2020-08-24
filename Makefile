@@ -34,7 +34,7 @@ OBJECTS += dep/lib/libavcodec.a
 OBJECTS += dep/lib/libavutil.a
 OBJECTS += dep/lib/libswscale.a
 OBJECTS += $(lame)
-OBJECTS += $(libopus)
+# OBJECTS += $(libopus)
 ifdef ENABLE_H264
 	OBJECTS += $(x264)
 endif
@@ -47,7 +47,7 @@ DEP_LDFLAGS += -L$(DEP_PATH)/lib
 FFMPEG_FORMATS += --enable-muxer=wav --enable-encoder=pcm_s16le --enable-encoder=pcm_s24le
 FFMPEG_FORMATS += --enable-muxer=aiff --enable-encoder=pcm_s16be --enable-encoder=pcm_s24be
 FFMPEG_FORMATS += --enable-libmp3lame --enable-muxer=mp3 --enable-encoder=libmp3lame
-FFMPEG_FORMATS += --enable-libopus --enable-muxer=opus --enable-encoder=libopus
+# FFMPEG_FORMATS += --enable-libopus --enable-muxer=opus --enable-encoder=libopus
 FFMPEG_FORMATS += --enable-muxer=flac --enable-encoder=flac
 FFMPEG_FORMATS += --enable-muxer=ipod --enable-encoder=alac
 FFMPEG_FORMATS += --enable-muxer=mpeg1system --enable-encoder=mpeg2video --enable-encoder=mp2
@@ -62,7 +62,8 @@ ifdef ARCH_MAC
 # 	FFMPEG_FORMATS += --enable-videotoolbox --enable-muxer=mp4 --enable-encoder=h264_videotoolbox --enable-encoder=mp2
 endif
 
-FFMPEG_DEPS += $(lame) $(libopus)
+FFMPEG_DEPS += $(lame)
+# FFMPEG_DEPS += $(libopus)
 ifdef ENABLE_H264
 	FFMPEG_DEPS += $(x264)
 endif
@@ -95,8 +96,7 @@ $(libopus):
 	$(WGET) "https://archive.mozilla.org/pub/opus/opus-1.3.1.tar.gz"
 	$(SHA256) opus-1.3.1.tar.gz 65b58e1e25b2a114157014736a3d9dfeaad8d41be1c8179866f144a2fb44ff9d
 	cd dep && $(UNTAR) ../opus-1.3.1.tar.gz
-	# For some reason, we need to manually specify PIC on Windows. `--with-pic` doesn't seem to work.
-	cd dep/opus-1.3.1 && CFLAGS="-fPIC" $(CONFIGURE) --enable-shared=no --enable-static=yes --disable-extra-programs
+	cd dep/opus-1.3.1 && $(CONFIGURE) --enable-shared=no --enable-static=yes --disable-extra-programs
 	cd dep/opus-1.3.1 && $(MAKE) install
 
 

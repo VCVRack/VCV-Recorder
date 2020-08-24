@@ -62,7 +62,7 @@ static const std::vector<std::string> AUDIO_FORMATS = {
 #if defined ENABLE_H264
 	"aac",
 #endif
-	"opus",
+	// "opus",
 };
 
 static const std::vector<std::string> VIDEO_FORMATS = {
