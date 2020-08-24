@@ -922,6 +922,13 @@ struct Recorder : Module {
 		path = directory + "/" + basename + "." + extension;
 	}
 
+	bool isValidPath() {
+		if (path == "")
+			return false;
+		std::string dir = string::directory(path);
+		return system::isDirectory(dir);
+	}
+
 	// Settings
 
 	void setFormat(std::string format) {
@@ -1061,7 +1068,7 @@ struct RecButton : SvgSwitch {
 
 	void onDragStart(const event::DragStart& e) override {
 		Recorder* module = dynamic_cast<Recorder*>(paramQuantity->module);
-		if (module && module->path == "")
+		if (module && !module->isValidPath())
 			selectPath(module);
 
 		SvgSwitch::onDragStart(e);
