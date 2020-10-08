@@ -7,6 +7,8 @@
 	"author": "VCV",
 	"authorEmail": "contact@vcvrack.com",
 	"authorUrl": "https://vcvrack.com/",
+	"websiteUrl": "https://vcvrack.com/Recorder",
+	"manualUrl": "https://vcvrack.com/Recorder#manual",
 	"sourceUrl": "https://github.com/VCVRack/VCV-Recorder",
 	"changelogUrl": "https://github.com/VCVRack/VCV-Recorder/blob/v1/CHANGELOG.md",
 	"modules": [
