@@ -44,8 +44,8 @@ endif
 DEP_FLAGS += -I$(DEP_PATH)/include
 DEP_LDFLAGS += -L$(DEP_PATH)/lib
 
-FFMPEG_FORMATS += --enable-muxer=wav --enable-encoder=pcm_s16le --enable-encoder=pcm_s24le
-FFMPEG_FORMATS += --enable-muxer=aiff --enable-encoder=pcm_s16be --enable-encoder=pcm_s24be
+FFMPEG_FORMATS += --enable-muxer=wav --enable-encoder=pcm_s16le --enable-encoder=pcm_s24le --enable-encoder=pcm_f32le
+FFMPEG_FORMATS += --enable-muxer=aiff --enable-encoder=pcm_s16be --enable-encoder=pcm_s24be --enable-encoder=pcm_f32be
 FFMPEG_FORMATS += --enable-libmp3lame --enable-muxer=mp3 --enable-encoder=libmp3lame
 # FFMPEG_FORMATS += --enable-libopus --enable-muxer=opus --enable-encoder=libopus
 FFMPEG_FORMATS += --enable-muxer=flac --enable-encoder=flac

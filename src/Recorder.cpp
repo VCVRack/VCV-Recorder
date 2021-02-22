@@ -178,11 +178,13 @@ struct Encoder {
 		if (format == "wav") {
 			if (depth == 16) audioEncoderName = "pcm_s16le";
 			else if (depth == 24) audioEncoderName = "pcm_s24le";
+			else if (depth == 32) audioEncoderName = "pcm_f32le";
 			else assert(0);
 		}
 		else if (format == "aiff") {
 			if (depth == 16) audioEncoderName = "pcm_s16be";
 			else if (depth == 24) audioEncoderName = "pcm_s24be";
+			else if (depth == 32) audioEncoderName = "pcm_f32be";
 			else assert(0);
 		}
 		else if (format == "flac") audioEncoderName = "flac";
@@ -225,11 +227,13 @@ struct Encoder {
 		if (format == "wav" || format == "aiff" || format == "flac") {
 			if (depth == 16) audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 			else if (depth == 24) audioCtx->sample_fmt = AV_SAMPLE_FMT_S32;
+			else if (depth == 32) audioCtx->sample_fmt = AV_SAMPLE_FMT_FLT;
 			else assert(0);
 		}
 		else if (format == "alac") {
 			if (depth == 16) audioCtx->sample_fmt = AV_SAMPLE_FMT_S16P;
 			else if (depth == 24) audioCtx->sample_fmt = AV_SAMPLE_FMT_S32P;
+			else if (depth == 32) audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
 			else assert(0);
 		}
 		else if (format == "mp3") audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
@@ -497,6 +501,13 @@ struct Encoder {
 			for (int c = 0; c < audioCtx->channels; c++) {
 				float v = clamp(input[c], -1.f, 1.f);
 				output[c][audioFrameSampleIndex] = v;
+			}
+		}
+		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_FLT) {
+			float** output = (float**) audioFrame->data;
+			for (int c = 0; c < audioCtx->channels; c++) {
+				float v = clamp(input[c], -1.f, 1.f);
+				output[c][audioFrameSampleIndex * audioCtx->channels + c] = v;
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S16) {
@@ -975,7 +986,7 @@ struct Recorder : Module {
 	}
 
 	std::vector<int> getDepths() {
-		return {16, 24};
+		return {16, 24, 32};
 	}
 
 	bool isDepthShown() {
