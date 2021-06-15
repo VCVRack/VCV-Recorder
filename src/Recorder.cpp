@@ -111,6 +111,8 @@ struct Encoder {
 	uint8_t *videoData[2] = {};
 	std::atomic<int> videoDataIndex{0};
 
+	Encoder() {}
+
 	~Encoder() {
 		stop();
 		close();
@@ -584,15 +586,21 @@ struct Encoder {
 	}
 
 	void start() {
+		if (workerThread.joinable())
+			return;
+
 		running = true;
-		workerThread = std::thread([&] {
+		workerThread = std::thread([this] {
 			run();
 		});
 	}
 
 	void stop() {
+		if (!workerThread.joinable())
+			return;
+
 		running = false;
-		workerCv.notify_one();
+		workerCv.notify_all();
 		if (workerThread.joinable())
 			workerThread.join();
 	}
@@ -889,8 +897,8 @@ struct Recorder : Module {
 			return;
 		}
 
-		directory = string::directory(path);
-		basename = string::filenameBase(string::filename(path));
+		directory = system::getDirectory(path);
+		basename = system::getStem(path);
 		fixPathExtension();
 	}
 
@@ -946,33 +954,41 @@ struct Recorder : Module {
 		this->height = height;
 	}
 
-	void setPrimaryModule(bool enable) {
-		if (enable) {
-			// Check if already primary
-			if (APP->engine->getPrimaryModule() == this)
-				return;
-			// Make sure thread is not running
-			if (primaryThread.joinable())
-				primaryThread.join();
-			APP->engine->setPrimaryModule(this);
-			// Create primary thread
-			primaryThread = std::thread([&](Context* context) {
-				contextSet(context);
-				runPrimaryThread();
-			}, contextGet());
-		}
-		else {
-			APP->engine->setPrimaryModule(NULL);
-			if (primaryThread.joinable())
-				primaryThread.join();
-		}
+	// void setPrimaryModule(bool enable) {
+	// 	if (enable) {
+	// 		// Check if already primary
+	// 		if (APP->engine->getPrimaryModule() == this)
+	// 			return;
+	// 		// Make sure thread is not running
+	// 		if (primaryThread.joinable())
+	// 			primaryThread.join();
+	// 		APP->engine->setPrimaryModule(this);
+	// 		// Create primary thread
+	// 		primaryThread = std::thread([&](Context* context) {
+	// 			contextSet(context);
+	// 			runPrimaryThread();
+	// 		}, contextGet());
+	// 	}
+	// 	else {
+	// 		APP->engine->setPrimaryModule(NULL);
+	// 		if (primaryThread.joinable())
+	// 			primaryThread.join();
+	// 	}
+	// }
+
+	// void runPrimaryThread() {
+	// 	while (APP->engine->getPrimaryModule() == this) {
+	// 		APP->engine->stepBlock(512);
+	// 		// std::this_thread::yield();
+	// 	}
+	// }
+
+	void setPrimary() {
+		APP->engine->setPrimaryModule(this);
 	}
 
-	void runPrimaryThread() {
-		while (APP->engine->getPrimaryModule() == this) {
-			APP->engine->step(512);
-			// std::this_thread::yield();
-		}
+	bool isPrimary() {
+		return APP->engine->getPrimaryModule() == this;
 	}
 };
 
@@ -986,8 +1002,8 @@ static void selectPath(Recorder *module) {
 	std::string dir;
 	std::string filename;
 	if (module->path != "") {
-		dir = string::directory(module->path);
-		filename = string::filename(module->path);
+		dir = system::getDirectory(module->path);
+		filename = system::getFilename(module->path);
 	}
 	else {
 		dir = asset::user("recordings");
@@ -1006,7 +1022,7 @@ static void selectPath(Recorder *module) {
 struct RecButton : SvgSwitch {
 	RecButton() {
 		momentary = true;
-		addFrame(APP->window->loadSvg(asset::plugin(pluginInstance, "res/RecButton.svg")));
+		addFrame(Svg::load(asset::plugin(pluginInstance, "res/RecButton.svg")));
 	}
 
 	void onDragStart(const event::DragStart &e) override {
@@ -1027,118 +1043,6 @@ struct RecLight : RedLight {
 };
 
 
-struct PathItem : MenuItem {
-	Recorder *module;
-	void onAction(const event::Action &e) override {
-		selectPath(module);
-	}
-};
-
-
-struct IncrementPathItem : MenuItem {
-	Recorder *module;
-	void onAction(const event::Action &e) override {
-		module->incrementPath ^= true;
-	}
-};
-
-
-struct FormatItem : MenuItem {
-	Recorder *module;
-	std::string format;
-	void onAction(const event::Action &e) override {
-		module->setFormat(format);
-	}
-};
-
-
-struct SampleRateValueItem : MenuItem {
-	Recorder *module;
-	int sampleRate;
-	void onAction(const event::Action &e) override {
-		module->setSampleRate(sampleRate);
-	}
-};
-
-
-struct SampleRateItem : MenuItem {
-	Recorder *module;
-	Menu *createChildMenu() override {
-		Menu *menu = new Menu;
-		for (int sampleRate : module->getSampleRates()) {
-			SampleRateValueItem *item = new SampleRateValueItem;
-			item->text = string::f("%g kHz", sampleRate / 1000.0);
-			item->rightText = CHECKMARK(module->sampleRate == sampleRate);
-			item->module = module;
-			item->sampleRate = sampleRate;
-			menu->addChild(item);
-		}
-		return menu;
-	}
-};
-
-
-struct DepthValueItem : MenuItem {
-	Recorder *module;
-	int depth;
-	void onAction(const event::Action &e) override {
-		module->setDepth(depth);
-	}
-};
-
-
-struct DepthItem : MenuItem {
-	Recorder *module;
-	Menu *createChildMenu() override {
-		Menu *menu = new Menu;
-		for (int depth : module->getDepths()) {
-			DepthValueItem *item = new DepthValueItem;
-			item->text = string::f("%d bit", depth);
-			item->rightText = CHECKMARK(module->depth == depth);
-			item->module = module;
-			item->depth = depth;
-			menu->addChild(item);
-		}
-		return menu;
-	}
-};
-
-
-struct BitRateValueItem : MenuItem {
-	Recorder *module;
-	int bitRate;
-	void onAction(const event::Action &e) override {
-		module->setBitRate(bitRate);
-	}
-};
-
-
-struct BitRateItem : MenuItem {
-	Recorder *module;
-	Menu *createChildMenu() override {
-		Menu *menu = new Menu;
-		for (int bitRate : module->getBitRates()) {
-			BitRateValueItem *item = new BitRateValueItem;
-			item->text = string::f("%d kbps", bitRate / 1000);
-			item->rightText = CHECKMARK(module->bitRate == bitRate);
-			item->module = module;
-			item->bitRate = bitRate;
-			menu->addChild(item);
-		}
-		return menu;
-	}
-};
-
-
-struct PrimaryModuleItem : MenuItem {
-	Recorder* module;
-	void onAction(const event::Action& e) override {
-		bool isPrimaryModule = (APP->engine->getPrimaryModule() == module);
-		module->setPrimaryModule(!isPrimaryModule);
-	}
-};
-
-
 ////////////////////
 // ModuleWidgets
 ////////////////////
@@ -1150,7 +1054,7 @@ struct RecorderWidget : ModuleWidget {
 
 	RecorderWidget(Recorder *module) {
 		setModule(module);
-		setPanel(APP->window->loadSvg(asset::plugin(pluginInstance, "res/Recorder.svg")));
+		setPanel(Svg::load(asset::plugin(pluginInstance, "res/Recorder.svg")));
 
 		addChild(createWidget<ScrewSilver>(Vec(RACK_GRID_WIDTH, 0)));
 		addChild(createWidget<ScrewSilver>(Vec(box.size.x - 2 * RACK_GRID_WIDTH, 0)));
@@ -1201,79 +1105,84 @@ struct RecorderWidget : ModuleWidget {
 	void appendContextMenu(Menu *menu) override {
 		Recorder *module = dynamic_cast<Recorder*>(this->module);
 
-		menu->addChild(new MenuEntry);
-
+		menu->addChild(new MenuSeparator);
 		menu->addChild(createMenuLabel("Output file"));
 
-		PathItem *pathItem = new PathItem;
 		std::string path = string::ellipsizePrefix(module->path, 30);
-		pathItem->text = (path != "") ? path : "Select...";
-		pathItem->module = module;
-		menu->addChild(pathItem);
+		menu->addChild(createCheckMenuItem((path != "") ? path : "Select...",
+			[=]() {return module->isPrimary();},
+			[=]() {selectPath(module);}
+		));
 
-		IncrementPathItem *incrementPathItem = new IncrementPathItem;
-		incrementPathItem->text = "Append -001, -002, etc.";
-		incrementPathItem->rightText = CHECKMARK(module->incrementPath);
-		incrementPathItem->module = module;
-		menu->addChild(incrementPathItem);
+		menu->addChild(createBoolPtrMenuItem("Append -001, -002, etc.", &module->incrementPath));
 
-		menu->addChild(new MenuEntry);
+		menu->addChild(new MenuSeparator);
 		menu->addChild(createMenuLabel("Audio formats"));
 
 		for (const std::string &format : AUDIO_FORMATS) {
 			const FormatInfo &fi = FORMAT_INFO.at(format);
-			FormatItem *formatItem = new FormatItem;
-			formatItem->text = fi.name + " (." + fi.extension + ")";
-			formatItem->rightText = CHECKMARK(format == module->format);
-			formatItem->module = module;
-			formatItem->format = format;
-			menu->addChild(formatItem);
+			menu->addChild(createCheckMenuItem(fi.name + " (." + fi.extension + ")",
+				[=]() {return format == module->format;},
+				[=]() {module->setFormat(format);}
+			));
 		}
 
-		menu->addChild(new MenuEntry);
+		menu->addChild(new MenuSeparator);
 		menu->addChild(createMenuLabel("Video formats"));
 
 		for (const std::string &format : VIDEO_FORMATS) {
 			const FormatInfo &fi = FORMAT_INFO.at(format);
-			FormatItem *formatItem = new FormatItem;
-			formatItem->text = fi.name + " (." + fi.extension + ")";
-			formatItem->rightText = CHECKMARK(format == module->format);
-			formatItem->module = module;
-			formatItem->format = format;
-			menu->addChild(formatItem);
+			menu->addChild(createCheckMenuItem(fi.name + " (." + fi.extension + ")",
+				[=]() {return format == module->format;},
+				[=]() {module->setFormat(format);}
+			));
 		}
 
-		menu->addChild(new MenuEntry);
+		menu->addChild(new MenuSeparator);
 		menu->addChild(createMenuLabel("Encoder settings"));
 
-		// SampleRateItem *sampleRateItem = new SampleRateItem;
-		// sampleRateItem->text = "Sample rate";
-		// sampleRateItem->rightText = RIGHT_ARROW;
-		// sampleRateItem->module = module;
-		// menu->addChild(sampleRateItem);
+		menu->addChild(createSubmenuItem("Sample rate",
+			[=](Menu* menu) {
+				for (int sampleRate : module->getSampleRates()) {
+					menu->addChild(createCheckMenuItem(string::f("%g kHz", sampleRate / 1000.0),
+						[=]() {return module->sampleRate == sampleRate;},
+						[=]() {module->setSampleRate(sampleRate); DEBUG("%d", sampleRate);}
+					));
+				}
+			}
+		));
 
 		if (module->showDepth()) {
-			DepthItem *depthItem = new DepthItem;
-			depthItem->text = "Bit depth";
-			depthItem->rightText = RIGHT_ARROW;
-			depthItem->module = module;
-			menu->addChild(depthItem);
+			menu->addChild(createSubmenuItem("Bit depth",
+				[=](Menu* menu) {
+					for (int depth : module->getDepths()) {
+						menu->addChild(createCheckMenuItem(string::f("%d bit", depth),
+							[=]() {return module->depth == depth;},
+							[=]() {module->setDepth(depth);}
+						));
+					}
+				}
+			));
 		}
 
 		if (module->showBitRate()) {
-			BitRateItem *bitRateItem = new BitRateItem;
-			bitRateItem->text = "Bit rate";
-			bitRateItem->rightText = RIGHT_ARROW;
-			bitRateItem->module = module;
-			menu->addChild(bitRateItem);
+			menu->addChild(createSubmenuItem("Bit rate",
+				[=](Menu* menu) {
+					for (int bitRate : module->getBitRates()) {
+						menu->addChild(createCheckMenuItem(string::f("%d kbps", bitRate / 1000),
+							[=]() {return module->bitRate == bitRate;},
+							[=]() {module->setBitRate(bitRate);}
+						));
+					}
+				}
+			));
 		}
 
-		menu->addChild(new MenuEntry);
-		PrimaryModuleItem* primaryModuleItem = new PrimaryModuleItem;
-		primaryModuleItem->text = "Primary audio module";
-		primaryModuleItem->rightText = CHECKMARK(APP->engine->getPrimaryModule() == module);
-		primaryModuleItem->module = module;
-		menu->addChild(primaryModuleItem);
+		menu->addChild(new MenuSeparator);
+		menu->addChild(createCheckMenuItem("Primary audio module",
+			[=]() {return module->isPrimary();},
+			[=]() {module->setPrimary();}
+		));
 	}
 
 	void step() override {
