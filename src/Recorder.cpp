@@ -659,6 +659,11 @@ struct Recorder : Module {
 		config(NUM_PARAMS, NUM_INPUTS, NUM_OUTPUTS, NUM_LIGHTS);
 		configParam(GAIN_PARAM, 0.f, 2.f, 1.f, "Level", " dB", -10, 40);
 
+		configInput(GATE_INPUT, "Gate");
+		configInput(TRIG_INPUT, "Trigger");
+		configInput(LEFT_INPUT, "Left/mono");
+		configInput(RIGHT_INPUT, "Right");
+
 		gateDivider.setDivision(32);
 		lightDivider.setDivision(512);
 		onReset();
