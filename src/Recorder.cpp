@@ -222,17 +222,18 @@ struct Encoder {
 		}
 
 		// Check sample rate
-		bool validSampleRate = false;
-		for (const int *p = audioCodec->supported_samplerates; p && *p != 0; p++) {
-			if (sampleRate == *p) {
-				validSampleRate = true;
-				break;
-			}
-		}
-		if (!validSampleRate) {
-			WARN("Sample rate %d not supported by codec", sampleRate);
-			return;
-		}
+		// bool validSampleRate = false;
+		// for (const int *p = audioCodec->supported_samplerates; p && *p != 0; p++) {
+		// 	DEBUG("sr %d", *p);
+		// 	if (sampleRate == *p) {
+		// 		validSampleRate = true;
+		// 		break;
+		// 	}
+		// }
+		// if (!validSampleRate) {
+		// 	WARN("Sample rate %d not supported by codec", sampleRate);
+		// 	return;
+		// }
 
 		// Set sample rate
 		audioCtx->sample_rate = sampleRate;
@@ -615,7 +616,6 @@ struct Encoder {
 struct Recorder : Module {
 	enum ParamIds {
 		GAIN_PARAM,
-		REC_PARAM,
 		NUM_PARAMS
 	};
 	enum InputIds {
@@ -635,13 +635,13 @@ struct Recorder : Module {
 	};
 
 	dsp::ClockDivider gateDivider;
-	dsp::BooleanTrigger recTrigger;
 	dsp::SchmittTrigger trigTrigger;
 	dsp::VuMeter2 vuMeter[2];
 	dsp::ClockDivider lightDivider;
 	Encoder *encoder = NULL;
 	std::mutex encoderMutex;
-	std::thread primaryThread;
+	// std::thread primaryThread;
+	bool recClicked = false;
 
 	// Settings. Copied to Encoder when created.
 	std::string format;
@@ -658,7 +658,6 @@ struct Recorder : Module {
 	Recorder() {
 		config(NUM_PARAMS, NUM_INPUTS, NUM_OUTPUTS, NUM_LIGHTS);
 		configParam(GAIN_PARAM, 0.f, 2.f, 1.f, "Level", " dB", -10, 40);
-		configParam(REC_PARAM, 0.f, 1.f, 0.f, "Record");
 
 		gateDivider.setDivision(32);
 		lightDivider.setDivision(512);
@@ -669,10 +668,10 @@ struct Recorder : Module {
 		stop();
 
 		// Stop primary thread
-		if (APP->engine->getPrimaryModule() == this) {
-			if (primaryThread.joinable())
-				primaryThread.join();
-		}
+		// if (APP->engine->getPrimaryModule() == this) {
+		// 	if (primaryThread.joinable())
+		// 		primaryThread.join();
+		// }
 	}
 
 	void onReset() override {
@@ -735,8 +734,9 @@ struct Recorder : Module {
 			// Recording state
 			bool gate = isRecording();
 			bool oldGate = gate;
-			if (recTrigger.process(params[REC_PARAM].getValue())) {
+			if (recClicked) {
 				gate ^= true;
+				recClicked = false;
 			}
 			if (trigTrigger.process(rescale(inputs[TRIG_INPUT].getVoltage(), 0.1, 2.0, 0.0, 1.0))) {
 				gate ^= true;
@@ -983,13 +983,13 @@ struct Recorder : Module {
 	// 	}
 	// }
 
-	void setPrimary() {
-		APP->engine->setPrimaryModule(this);
-	}
+	// void setPrimary() {
+	// 	APP->engine->setPrimaryModule(this);
+	// }
 
-	bool isPrimary() {
-		return APP->engine->getPrimaryModule() == this;
-	}
+	// bool isPrimary() {
+	// 	return APP->engine->getPrimaryModule() == this;
+	// }
 };
 
 
@@ -1019,18 +1019,23 @@ static void selectPath(Recorder *module) {
 }
 
 
-struct RecButton : SvgSwitch {
+struct RecButton : SvgButton {
+	Recorder* module;
+
 	RecButton() {
-		momentary = true;
 		addFrame(Svg::load(asset::plugin(pluginInstance, "res/RecButton.svg")));
 	}
 
+	// Instead of using onAction() which is called on mouse up, handle on mouse down
 	void onDragStart(const event::DragStart &e) override {
-		Recorder *module = dynamic_cast<Recorder*>(this->module);
-		if (module && module->path == "")
-			selectPath(module);
+		if (e.button == GLFW_MOUSE_BUTTON_LEFT) {
+			if (module && module->path == "") {
+				selectPath(module);
+			}
+			module->recClicked = true;
+		}
 
-		SvgSwitch::onDragStart(e);
+		SvgButton::onDragStart(e);
 	}
 };
 
@@ -1062,7 +1067,10 @@ struct RecorderWidget : ModuleWidget {
 		addChild(createWidget<ScrewSilver>(Vec(box.size.x - 2 * RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
 
 		addParam(createParamCentered<RoundBigBlackKnob>(mm2px(Vec(12.7, 21.417)), module, Recorder::GAIN_PARAM));
-		addParam(createParamCentered<RecButton>(mm2px(Vec(12.7, 73.624)), module, Recorder::REC_PARAM));
+
+		RecButton* recButton = createWidgetCentered<RecButton>(mm2px(Vec(12.7, 73.624)));
+		recButton->module = module;
+		addChild(recButton);
 
 		addInput(createInputCentered<PJ301MPort>(mm2px(Vec(6.697, 97.253)), module, Recorder::GATE_INPUT));
 		addInput(createInputCentered<PJ301MPort>(mm2px(Vec(18.703, 97.253)), module, Recorder::TRIG_INPUT));
@@ -1109,19 +1117,18 @@ struct RecorderWidget : ModuleWidget {
 		menu->addChild(createMenuLabel("Output file"));
 
 		std::string path = string::ellipsizePrefix(module->path, 30);
-		menu->addChild(createCheckMenuItem((path != "") ? path : "Select...",
-			[=]() {return module->isPrimary();},
+		menu->addChild(createMenuItem((path != "") ? path : "Select...", "",
 			[=]() {selectPath(module);}
 		));
 
-		menu->addChild(createBoolPtrMenuItem("Append -001, -002, etc.", &module->incrementPath));
+		menu->addChild(createBoolPtrMenuItem("Append -001, -002, etc.", "", &module->incrementPath));
 
 		menu->addChild(new MenuSeparator);
 		menu->addChild(createMenuLabel("Audio formats"));
 
 		for (const std::string &format : AUDIO_FORMATS) {
 			const FormatInfo &fi = FORMAT_INFO.at(format);
-			menu->addChild(createCheckMenuItem(fi.name + " (." + fi.extension + ")",
+			menu->addChild(createCheckMenuItem(fi.name + " (." + fi.extension + ")", "",
 				[=]() {return format == module->format;},
 				[=]() {module->setFormat(format);}
 			));
@@ -1132,7 +1139,7 @@ struct RecorderWidget : ModuleWidget {
 
 		for (const std::string &format : VIDEO_FORMATS) {
 			const FormatInfo &fi = FORMAT_INFO.at(format);
-			menu->addChild(createCheckMenuItem(fi.name + " (." + fi.extension + ")",
+			menu->addChild(createCheckMenuItem(fi.name + " (." + fi.extension + ")", "",
 				[=]() {return format == module->format;},
 				[=]() {module->setFormat(format);}
 			));
@@ -1141,22 +1148,22 @@ struct RecorderWidget : ModuleWidget {
 		menu->addChild(new MenuSeparator);
 		menu->addChild(createMenuLabel("Encoder settings"));
 
-		menu->addChild(createSubmenuItem("Sample rate",
+		menu->addChild(createSubmenuItem("Sample rate", string::f("%g kHz", module->sampleRate / 1000.0),
 			[=](Menu* menu) {
 				for (int sampleRate : module->getSampleRates()) {
-					menu->addChild(createCheckMenuItem(string::f("%g kHz", sampleRate / 1000.0),
+					menu->addChild(createCheckMenuItem(string::f("%g kHz", sampleRate / 1000.0), "",
 						[=]() {return module->sampleRate == sampleRate;},
-						[=]() {module->setSampleRate(sampleRate); DEBUG("%d", sampleRate);}
+						[=]() {module->setSampleRate(sampleRate);}
 					));
 				}
 			}
 		));
 
 		if (module->showDepth()) {
-			menu->addChild(createSubmenuItem("Bit depth",
+			menu->addChild(createSubmenuItem("Bit depth", string::f("%d bit", module->depth),
 				[=](Menu* menu) {
 					for (int depth : module->getDepths()) {
-						menu->addChild(createCheckMenuItem(string::f("%d bit", depth),
+						menu->addChild(createCheckMenuItem(string::f("%d bit", depth), "",
 							[=]() {return module->depth == depth;},
 							[=]() {module->setDepth(depth);}
 						));
@@ -1166,10 +1173,10 @@ struct RecorderWidget : ModuleWidget {
 		}
 
 		if (module->showBitRate()) {
-			menu->addChild(createSubmenuItem("Bit rate",
+			menu->addChild(createSubmenuItem("Bit rate", string::f("%d kbps", module->bitRate / 1000),
 				[=](Menu* menu) {
 					for (int bitRate : module->getBitRates()) {
-						menu->addChild(createCheckMenuItem(string::f("%d kbps", bitRate / 1000),
+						menu->addChild(createCheckMenuItem(string::f("%d kbps", bitRate / 1000), "",
 							[=]() {return module->bitRate == bitRate;},
 							[=]() {module->setBitRate(bitRate);}
 						));
@@ -1178,11 +1185,11 @@ struct RecorderWidget : ModuleWidget {
 			));
 		}
 
-		menu->addChild(new MenuSeparator);
-		menu->addChild(createCheckMenuItem("Primary audio module",
-			[=]() {return module->isPrimary();},
-			[=]() {module->setPrimary();}
-		));
+		// menu->addChild(new MenuSeparator);
+		// menu->addChild(createCheckMenuItem("Primary audio module", "",
+		// 	[=]() {return module->isPrimary();},
+		// 	[=]() {module->setPrimary();}
+		// ));
 	}
 
 	void step() override {
