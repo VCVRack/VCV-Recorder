@@ -54,7 +54,7 @@ struct FormatInfo {
 
 
 // Formats available for the user to choose
-static const std::vector<std::string> AUDIO_FORMATS = {"wav", "aiff", "flac", "alac", "mp3"};
+static const std::vector<std::string> AUDIO_FORMATS = {"wav", "aiff", "flac", "alac", "mp3", "opus"};
 static const std::vector<std::string> VIDEO_FORMATS = {"mpeg2", "ffv1", "huffyuv"};
 
 // Some of these might not be enabled.
