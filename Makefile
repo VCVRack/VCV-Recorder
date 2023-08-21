@@ -54,7 +54,12 @@ endif
 $(ffmpeg): $(lame) $(libopus)
 	# Don't use $(CONFIGURE) because this is a handwritten configure script
 	# ffmpeg bug: The pkgconfig dir is not set from pkgconfigdir at all. Set it with PKG_CONFIG_PATH instead.
-	cd ffmpeg && PKG_CONFIG_PATH="$(DEP_PATH)/lib/pkgconfig" ./configure --prefix="$(DEP_PATH)" --enable-pic --enable-gpl \
+	cd ffmpeg && PKG_CONFIG_PATH="$(DEP_PATH)/lib/pkgconfig" ./configure \
+		--prefix="$(DEP_PATH)" \
+		--extra-cflags="$(MAC_SDK_FLAGS)" \
+		--extra-ldflags="$(MAC_SDK_FLAGS)" \
+		--enable-pic \
+		--enable-gpl \
 		--disable-programs --disable-doc --disable-avdevice --disable-swresample --disable-postproc --disable-avfilter --disable-network --disable-iconv --disable-alsa --disable-autodetect --disable-everything \
 		--enable-protocol=file \
 		$(FFMPEG_FORMATS)
