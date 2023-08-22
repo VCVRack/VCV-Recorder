@@ -156,6 +156,7 @@ struct Encoder {
 		if (format == "wav") {
 			if (depth == 16) audioEncoderName = "pcm_s16le";
 			else if (depth == 24) audioEncoderName = "pcm_s24le";
+			else if (depth == 32) audioEncoderName = "pcm_f32le";
 			else assert(0);
 		}
 		else if (format == "aiff") {
@@ -196,6 +197,7 @@ struct Encoder {
 		if (format == "wav" || format == "aiff" || format == "flac") {
 			if (depth == 16) audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 			else if (depth == 24) audioCtx->sample_fmt = AV_SAMPLE_FMT_S32;
+			else if (depth == 32) audioCtx->sample_fmt = AV_SAMPLE_FMT_FLT;
 			else assert(0);
 		}
 		else if (format == "alac") {
@@ -438,38 +440,39 @@ struct Encoder {
 
 		// Set output
 		if (audioCtx->sample_fmt == AV_SAMPLE_FMT_FLTP) {
-			float **output = (float**) audioFrame->data;
+			float** output = (float**) audioFrame->data;
 			for (int c = 0; c < audioCtx->channels; c++) {
-				float v = clamp(input[c], -1.f, 1.f);
-				output[c][audioFrameSampleIndex] = v;
+				output[c][audioFrameSampleIndex] = input[c];
+			}
+		}
+		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_FLT) {
+			float** output = (float**) audioFrame->data;
+			for (int c = 0; c < audioCtx->channels; c++) {
+				output[0][audioFrameSampleIndex * audioCtx->channels + c] = input[c];
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S16) {
-			int16_t **output = (int16_t**) audioFrame->data;
+			int16_t** output = (int16_t**) audioFrame->data;
 			for (int c = 0; c < audioCtx->channels; c++) {
-				float v = clamp(input[c], -1.f, 1.f);
-				output[0][audioFrameSampleIndex * audioCtx->channels + c] = (int16_t) std::round(v * 0x7fff);
+				output[0][audioFrameSampleIndex * audioCtx->channels + c] = dsp::convert<int16_t>(clamp(input[c], -1.f, 1.f));
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S32) {
-			int32_t **output = (int32_t**) audioFrame->data;
+			int32_t** output = (int32_t**) audioFrame->data;
 			for (int c = 0; c < audioCtx->channels; c++) {
-				float v = clamp(input[c], -1.f, 1.f);
-				output[0][audioFrameSampleIndex * audioCtx->channels + c] = (int32_t) std::round(v * 0x7fffffff);
+				output[0][audioFrameSampleIndex * audioCtx->channels + c] = dsp::convert<int32_t>(clamp(input[c], -1.f, 1.f));
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S16P) {
-			int16_t **output = (int16_t**) audioFrame->data;
+			int16_t** output = (int16_t**) audioFrame->data;
 			for (int c = 0; c < audioCtx->channels; c++) {
-				float v = clamp(input[c], -1.f, 1.f);
-				output[c][audioFrameSampleIndex] = (int16_t) std::round(v * 0x7fff);
+				output[c][audioFrameSampleIndex] = dsp::convert<int16_t>(clamp(input[c], -1.f, 1.f));
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S32P) {
-			int32_t **output = (int32_t**) audioFrame->data;
+			int32_t** output = (int32_t**) audioFrame->data;
 			for (int c = 0; c < audioCtx->channels; c++) {
-				float v = clamp(input[c], -1.f, 1.f);
-				output[c][audioFrameSampleIndex] = (int32_t) std::round(v * 0x7fffffff);
+				output[c][audioFrameSampleIndex] = dsp::convert<int32_t>(clamp(input[c], -1.f, 1.f));
 			}
 		}
 		else {
@@ -924,7 +927,10 @@ struct Recorder : Module {
 	}
 
 	std::vector<int> getDepths() {
-		return {16, 24};
+		std::vector<int> depths = {16, 24};
+		if (format == "wav")
+			depths.push_back(32);
+		return depths;
 	}
 
 	bool showDepth() {
