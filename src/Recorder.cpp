@@ -19,13 +19,6 @@ extern "C" {
 ////////////////////
 
 
-static void printFfmpegError(int err) {
-	char str[AV_ERROR_MAX_STRING_SIZE];
-	av_strerror(err, str, sizeof(str));
-	DEBUG("ffmpeg error: %s", str);
-}
-
-
 static void blitRGBA(uint8_t *dst, int dstWidth, int dstHeight, int dstStride, const uint8_t *src, int srcWidth, int srcHeight, int srcStride, int x, int y) {
 	for (int srcY = 0; srcY < srcHeight; srcY++) {
 		int dstY = y + srcY;
@@ -150,7 +143,9 @@ struct Encoder {
 		std::string url = "file:" + path;
 		err = avio_open(&io, url.c_str(), AVIO_FLAG_WRITE);
 		if (err < 0) {
-			printFfmpegError(err);
+			char str[AV_ERROR_MAX_STRING_SIZE];
+			av_strerror(err, str, sizeof(str));
+			WARN("Failed to open file %s: %s", path.c_str(), str);
 			return;
 		}
 		assert(io);
@@ -247,7 +242,9 @@ struct Encoder {
 		// Open audio encoder
 		err = avcodec_open2(audioCtx, audioCodec, NULL);
 		if (err < 0) {
-			printFfmpegError(err);
+			char str[AV_ERROR_MAX_STRING_SIZE];
+			av_strerror(err, str, sizeof(str));
+			WARN("Failed to open audio encoder: %s", str);
 			return;
 		}
 
@@ -666,7 +663,7 @@ struct Recorder : Module {
 
 		gateDivider.setDivision(32);
 		lightDivider.setDivision(512);
-		onReset();
+		onReset(ResetEvent());
 	}
 
 	~Recorder() {
@@ -679,7 +676,7 @@ struct Recorder : Module {
 		// }
 	}
 
-	void onReset() override {
+	void onReset(const ResetEvent& e) override {
 		stop();
 		format = "wav";
 		path = "";
@@ -693,12 +690,13 @@ struct Recorder : Module {
 		width = height = 0;
 	}
 
-	void onSampleRateChange() override {
-		stop();
+	void onSampleRateChange(const SampleRateChangeEvent& e) override {
+		setSampleRate(e.sampleRate);
+		Module::onSampleRateChange(e);
 	}
 
-	json_t *dataToJson() override {
-		json_t *rootJ = json_object();
+	json_t* dataToJson() override {
+		json_t* rootJ = json_object();
 		json_object_set_new(rootJ, "format", json_string(format.c_str()));
 		json_object_set_new(rootJ, "path", json_string(path.c_str()));
 		json_object_set_new(rootJ, "incrementPath", json_boolean(incrementPath));
@@ -708,28 +706,28 @@ struct Recorder : Module {
 		return rootJ;
 	}
 
-	void dataFromJson(json_t *rootJ) override {
-		json_t *formatJ = json_object_get(rootJ, "format");
+	void dataFromJson(json_t* rootJ) override {
+		json_t* formatJ = json_object_get(rootJ, "format");
 		if (formatJ)
 			setFormat(json_string_value(formatJ));
 
-		json_t *pathJ = json_object_get(rootJ, "path");
+		json_t* pathJ = json_object_get(rootJ, "path");
 		if (pathJ)
 			setPath(json_string_value(pathJ));
 
-		json_t *incrementPathJ = json_object_get(rootJ, "incrementPath");
+		json_t* incrementPathJ = json_object_get(rootJ, "incrementPath");
 		if (incrementPathJ)
 			incrementPath = json_boolean_value(incrementPathJ);
 
-		json_t *sampleRateJ = json_object_get(rootJ, "sampleRate");
+		json_t* sampleRateJ = json_object_get(rootJ, "sampleRate");
 		if (sampleRateJ)
 			setSampleRate(json_integer_value(sampleRateJ));
 
-		json_t *depthJ = json_object_get(rootJ, "depth");
+		json_t* depthJ = json_object_get(rootJ, "depth");
 		if (depthJ)
 			setDepth(json_integer_value(depthJ));
 
-		json_t *bitRateJ = json_object_get(rootJ, "bitRate");
+		json_t* bitRateJ = json_object_get(rootJ, "bitRate");
 		if (bitRateJ)
 			setBitRate(json_integer_value(bitRateJ));
 	}
@@ -770,8 +768,6 @@ struct Recorder : Module {
 			in[1] = in[0];
 
 		// Process
-		setSampleRate((int) args.sampleRate);
-		// Check roughly
 		if (encoder) {
 			std::lock_guard<std::mutex> lock(encoderMutex);
 			// Check for certain behind lock
@@ -915,6 +911,8 @@ struct Recorder : Module {
 	}
 
 	std::vector<int> getSampleRates() {
+		if (format == "opus")
+			return {48000};
 		return {44100, 48000};
 	}
 
