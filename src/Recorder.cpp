@@ -14,6 +14,14 @@ extern "C" {
 }
 
 
+static const char* err2str(int err) {
+	static char str[AV_ERROR_MAX_STRING_SIZE];
+	str[0] = 0;
+	av_strerror(err, str, sizeof(str));
+	return str;
+}
+
+
 ////////////////////
 // DSP
 ////////////////////
@@ -114,7 +122,8 @@ struct Encoder {
 	void open(std::string format, std::string path, int channels, int sampleRate, int depth, int bitRate, int width, int height) {
 		int err;
 		// This method can only be called once per instance.
-		assert(!initialized);
+		if (initialized)
+			return;
 		initialized = true;
 
 		// Don't print ffmpeg messages to console.
@@ -133,22 +142,24 @@ struct Encoder {
 		else if (format == "h264") formatName = "mp4";
 		else if (format == "huffyuv") formatName = "avi";
 		else if (format == "ffv1") formatName = "avi";
-		else assert(0);
+		else {
+			WARN("Format %s not found", format.c_str());
+			return;
+		}
 
 		err = avformat_alloc_output_context2(&formatCtx, NULL, formatName.c_str(), path.c_str());
-		assert(err >= 0);
-		assert(formatCtx);
+		if (err < 0 || !formatCtx) {
+			WARN("Failed to create format %s: %s", formatName.c_str(), err2str(err));
+			return;
+		}
 
 		// Create IO
 		std::string url = "file:" + path;
 		err = avio_open(&io, url.c_str(), AVIO_FLAG_WRITE);
-		if (err < 0) {
-			char str[AV_ERROR_MAX_STRING_SIZE];
-			av_strerror(err, str, sizeof(str));
-			WARN("Failed to open file %s: %s", path.c_str(), str);
+		if (err < 0 || !io) {
+			WARN("Failed to open file %s: %s", path.c_str(), err2str(err));
 			return;
 		}
-		assert(io);
 		formatCtx->pb = io;
 
 		// Find audio encoder
@@ -157,13 +168,13 @@ struct Encoder {
 			if (depth == 16) audioEncoderName = "pcm_s16le";
 			else if (depth == 24) audioEncoderName = "pcm_s24le";
 			else if (depth == 32) audioEncoderName = "pcm_f32le";
-			else assert(0);
+			else return;
 		}
 		else if (format == "aiff") {
 			if (depth == 16) audioEncoderName = "pcm_s16be";
 			else if (depth == 24) audioEncoderName = "pcm_s24be";
 			else if (depth == 32) audioEncoderName = "pcm_f32be";
-			else assert(0);
+			else return;
 		}
 		else if (format == "flac") audioEncoderName = "flac";
 		else if (format == "alac") audioEncoderName = "alac";
@@ -173,14 +184,20 @@ struct Encoder {
 		else if (format == "h264") audioEncoderName = "mp2";
 		else if (format == "huffyuv") audioEncoderName = "pcm_s16le";
 		else if (format == "ffv1") audioEncoderName = "pcm_s16le";
-		else assert(0);
+		else return;
 
 		audioCodec = avcodec_find_encoder_by_name(audioEncoderName.c_str());
-		assert(audioCodec);
+		if (!audioCodec) {
+			WARN("Audio codec %s not found", audioEncoderName.c_str());
+			return;
+		}
 
 		// Create audio context
 		audioCtx = avcodec_alloc_context3(audioCodec);
-		assert(audioCtx);
+		if (!audioCtx) {
+			WARN("Failed to create audio context");
+			return;
+		}
 
 		// Set audio channels
 		audioCtx->channels = channels;
@@ -191,7 +208,8 @@ struct Encoder {
 			audioCtx->channel_layout = AV_CH_LAYOUT_STEREO;
 		}
 		else {
-			assert(0);
+			WARN("Could not get channel layout for %d channels", channels);
+			return;
 		}
 
 		// Set audio sample format
@@ -199,12 +217,12 @@ struct Encoder {
 			if (depth == 16) audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 			else if (depth == 24) audioCtx->sample_fmt = AV_SAMPLE_FMT_S32;
 			else if (depth == 32) audioCtx->sample_fmt = AV_SAMPLE_FMT_FLT;
-			else assert(0);
+			else return;
 		}
 		else if (format == "alac") {
 			if (depth == 16) audioCtx->sample_fmt = AV_SAMPLE_FMT_S16P;
 			else if (depth == 24) audioCtx->sample_fmt = AV_SAMPLE_FMT_S32P;
-			else assert(0);
+			else return;
 		}
 		else if (format == "mp3") audioCtx->sample_fmt = AV_SAMPLE_FMT_FLTP;
 		else if (format == "opus") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
@@ -212,7 +230,7 @@ struct Encoder {
 		else if (format == "h264") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 		else if (format == "huffyuv") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
 		else if (format == "ffv1") audioCtx->sample_fmt = AV_SAMPLE_FMT_S16;
-		else assert(0);
+		else return;
 
 		// Set bitrate
 		if (format == "mp3" || format == "opus" || format == "mpeg2" || format == "h264") {
@@ -245,23 +263,30 @@ struct Encoder {
 		// Open audio encoder
 		err = avcodec_open2(audioCtx, audioCodec, NULL);
 		if (err < 0) {
-			char str[AV_ERROR_MAX_STRING_SIZE];
-			av_strerror(err, str, sizeof(str));
-			WARN("Failed to open audio encoder: %s", str);
+			WARN("Failed to open audio encoder: %s", err2str(err));
 			return;
 		}
 
 		// Create audio stream
 		audioStream = avformat_new_stream(formatCtx, NULL);
-		assert(audioStream);
+		if (!audioStream) {
+			WARN("Failed to create audio stream");
+			return;
+		}
 
 		err = avcodec_parameters_from_context(audioStream->codecpar, audioCtx);
-		assert(err >= 0);
+		if (err < 0) {
+			WARN("Failed to configure audio stream: %s", err2str(err));
+			return;
+		}
 
 		// Create audio frame
 		for (int i = 0; i < AUDIO_FRAME_BUFFER_LEN; i++) {
 			audioFrames[i] = av_frame_alloc();
-			assert(audioFrames[i]);
+			if (!audioFrames[i]) {
+				WARN("Could not allocate audio frame %d", i);
+				return;
+			}
 
 			audioFrames[i]->pts = 0;
 			audioFrames[i]->format = audioCtx->sample_fmt;
@@ -273,10 +298,16 @@ struct Encoder {
 				audioFrames[i]->nb_samples = 1024;
 
 			err = av_frame_get_buffer(audioFrames[i], 0);
-			assert(err >= 0);
+			if (err < 0) {
+				WARN("Failed to get audio buffer %d: %s", i, err2str(err));
+				return;
+			}
 
 			err = av_frame_make_writable(audioFrames[i]);
-			assert(err >= 0);
+			if (err < 0) {
+				WARN("Failed to make audio stream %d writable: %s", i, err2str(err));
+				return;
+			}
 		}
 		// DEBUG("audio frame nb_samples %d", audioFrames[0]->nb_samples);
 
@@ -288,14 +319,23 @@ struct Encoder {
 			else if (format == "h264") videoEncoderName = "h264";
 			else if (format == "huffyuv") videoEncoderName = "huffyuv";
 			else if (format == "ffv1") videoEncoderName = "ffv1";
-			else assert(0);
+			else {
+				WARN("Video format %s not found", format.c_str());
+				return;
+			}
 
 			videoCodec = avcodec_find_encoder_by_name(videoEncoderName.c_str());
-			assert(videoCodec);
+			if (!videoCodec) {
+				WARN("Could not find video codec %s", videoEncoderName.c_str());
+				return;
+			}
 
 			// Create video encoder
 			videoCtx = avcodec_alloc_context3(videoCodec);
-			assert(videoCtx);
+			if (!videoCtx) {
+				WARN("Failed to create video encoder %s", videoEncoderName.c_str());
+				return;
+			}
 
 			videoCtx->bit_rate = 20 * 1000 * 1000 * 8;
 			// Round down to nearest even number
@@ -311,18 +351,30 @@ struct Encoder {
 
 			// Open video encoder
 			err = avcodec_open2(videoCtx, videoCodec, NULL);
-			assert(err >= 0);
+			if (err < 0) {
+				WARN("Failed to open video encoder: %s", err2str(err));
+				return;
+			}
 
 			// Create video stream
 			videoStream = avformat_new_stream(formatCtx, NULL);
-			assert(videoStream);
+			if (!videoStream) {
+				WARN("Failed to create video encoder");
+				return;
+			}
 
 			err = avcodec_parameters_from_context(videoStream->codecpar, videoCtx);
-			assert(err >= 0);
+			if (err < 0) {
+				WARN("Failed to configure video encoder: %s", err2str(err));
+				return;
+			}
 
 			// Create video frame
 			videoFrame = av_frame_alloc();
-			assert(videoFrame);
+			if (!videoFrame) {
+				WARN("Failed to allocate video frame");
+				return;
+			}
 
 			videoFrame->pts = 0;
 			videoFrame->format = videoCtx->pix_fmt;
@@ -330,14 +382,23 @@ struct Encoder {
 			videoFrame->height = videoCtx->height;
 
 			err = av_frame_get_buffer(videoFrame, 0);
-			assert(err >= 0);
+			if (err < 0) {
+				WARN("Failed to get video buffer: %s", err2str(err));
+				return;
+			}
 
 			err = av_frame_make_writable(videoFrame);
-			assert(err >= 0);
+			if (err < 0) {
+				WARN("Failed to make video frame writable: %s", err2str(err));
+				return;
+			}
 
 			// Create video rescaler
 			sws = sws_getContext(videoCtx->width, videoCtx->height, AV_PIX_FMT_RGBA, videoCtx->width, videoCtx->height, videoCtx->pix_fmt, SWS_POINT, NULL, NULL, NULL);
-			assert(sws);
+			if (err < 0) {
+				WARN("Failed to create video rescaler: %s", err2str(err));
+				return;
+			}
 
 			// Allocate videoData
 			int videoDataSize = videoCtx->width * videoCtx->height * 4;
@@ -365,7 +426,10 @@ struct Encoder {
 
 		// Write format header to file
 		err = avformat_write_header(formatCtx, NULL);
-		assert(err >= 0);
+		if (err < 0) {
+			WARN("Failed to write format header: %s", err2str(err));
+			return;
+		}
 
 		opened = true;
 	}
@@ -477,7 +541,7 @@ struct Encoder {
 			}
 		}
 		else {
-			assert(0);
+			WARN("Writing unknown audio sample_fmt %d", audioCtx->sample_fmt);
 		}
 
 		// Advance to the next frame if the current frame is full
@@ -500,7 +564,8 @@ struct Encoder {
 	void writeVideo() {
 		if (!videoCtx)
 			return;
-		assert(videoFrame);
+		if (!videoFrame)
+			return;
 
 		uint8_t *videoData = getConsumerVideoData();
 		if (!videoData)
@@ -543,12 +608,16 @@ struct Encoder {
 	}
 
 	void flushFrame(AVCodecContext *ctx, AVStream *stream, AVFrame *frame) {
+		if (!formatCtx)
+			return;
 		int err;
-		assert(formatCtx);
 
 		// frame may be NULL to signal the end of the stream.
 		err = avcodec_send_frame(ctx, frame);
-		assert(err >= 0);
+		if (err < 0) {
+			WARN("Failed to send video frame to encoder: %s", err2str(err));
+			return;
+		}
 
 		while (1) {
 			AVPacket pkt = {};
@@ -557,13 +626,19 @@ struct Encoder {
 			err = avcodec_receive_packet(ctx, &pkt);
 			if (err == AVERROR(EAGAIN) || err == AVERROR_EOF)
 				break;
-			assert(err >= 0);
+			if (err < 0) {
+				WARN("Failed to receive video packet: %s", err2str(err));
+				return;
+			}
 
 			pkt.stream_index = stream->index;
 			av_packet_rescale_ts(&pkt, ctx->time_base, stream->time_base);
 
 			err = av_interleaved_write_frame(formatCtx, &pkt);
-			assert(err >= 0);
+			if (err < 0) {
+				WARN("Failed to write video frame: %s", err2str(err));
+				return;
+			}
 		}
 	}
 
