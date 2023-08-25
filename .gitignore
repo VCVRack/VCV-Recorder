@@ -4,3 +4,5 @@
 /plugin.dll
 /plugin.so
 .DS_Store
+*.gz
+/dep
