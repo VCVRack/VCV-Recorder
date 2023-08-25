@@ -490,7 +490,7 @@ struct Encoder {
 	/** `input` must be `audioCtx->channels` length.
 	Called by the main thread.
 	*/
-	void writeAudio(float *input) {
+	void writeAudio(const float *input) {
 		if (!audioCtx)
 			return;
 
@@ -567,7 +567,7 @@ struct Encoder {
 		if (!videoFrame)
 			return;
 
-		uint8_t *videoData = getConsumerVideoData();
+		const uint8_t *videoData = getConsumerVideoData();
 		if (!videoData)
 			return;
 
