@@ -692,6 +692,7 @@ struct Encoder {
 struct Recorder : Module {
 	enum ParamIds {
 		GAIN_PARAM,
+		REC_PARAM,
 		NUM_PARAMS
 	};
 	enum InputIds {
@@ -734,6 +735,7 @@ struct Recorder : Module {
 	Recorder() {
 		config(NUM_PARAMS, NUM_INPUTS, NUM_OUTPUTS, NUM_LIGHTS);
 		configParam(GAIN_PARAM, 0.f, 2.f, 1.f, "Level", " dB", -10, 40);
+		configButton(REC_PARAM, "Record");
 
 		configInput(GATE_INPUT, "Gate");
 		configInput(TRIG_INPUT, "Trigger");
@@ -1104,15 +1106,10 @@ static void selectPath(Recorder *module) {
 }
 
 
-struct RecButton : SvgButton {
-	Recorder* module;
-
-	RecButton() {
-		addFrame(Svg::load(asset::plugin(pluginInstance, "res/RecButton.svg")));
-	}
-
+struct RecordButton : LightButton<VCVBezelBig, VCVBezelLightBig<RedLight>> {
 	// Instead of using onAction() which is called on mouse up, handle on mouse down
 	void onDragStart(const event::DragStart &e) override {
+		Recorder* module = dynamic_cast<Recorder*>(this->module);
 		if (e.button == GLFW_MOUSE_BUTTON_LEFT) {
 			if (module && module->path == "") {
 				selectPath(module);
@@ -1120,7 +1117,7 @@ struct RecButton : SvgButton {
 			module->recClicked = true;
 		}
 
-		SvgButton::onDragStart(e);
+		LightButton::onDragStart(e);
 	}
 };
 
@@ -1129,6 +1126,41 @@ struct RecLight : RedLight {
 	RecLight() {
 		bgColor = nvgRGB(0x66, 0x66, 0x66);
 		box.size = mm2px(Vec(12.700, 12.700));
+	}
+};
+
+
+/** Derived from VCV Sum */
+struct RecorderDisplay : LedDisplay {
+	void drawLayer(const DrawArgs& args, int layer) override {
+		if (layer == 1) {
+			static const std::vector<float> posY = {
+				mm2px(18.068 - 13.039),
+				mm2px(23.366 - 13.039),
+				mm2px(28.663 - 13.039),
+				mm2px(33.961 - 13.039),
+				mm2px(39.258 - 13.039),
+				mm2px(44.556 - 13.039),
+			};
+			static const std::vector<std::string> texts = {
+				" 0", "-3", "-6", "-12", "-24", "-36",
+			};
+
+			std::string fontPath = asset::system("res/fonts/Nunito-Bold.ttf");
+			std::shared_ptr<Font> font = APP->window->loadFont(fontPath);
+			if (font) {
+				nvgFontFaceId(args.vg, font->handle);
+				nvgFontSize(args.vg, 11);
+				nvgTextLetterSpacing(args.vg, 0.0);
+				nvgTextAlign(args.vg, NVG_ALIGN_CENTER | NVG_ALIGN_MIDDLE);
+				nvgFillColor(args.vg, nvgRGB(99, 99, 99));
+
+				for (int i = 0; i < 6; i++) {
+					nvgText(args.vg, 36.0, posY[i], texts[i].c_str(), NULL);
+				}
+			}
+		}
+		LedDisplay::drawLayer(args, layer);
 	}
 };
 
@@ -1144,37 +1176,37 @@ struct RecorderWidget : ModuleWidget {
 
 	RecorderWidget(Recorder *module) {
 		setModule(module);
-		setPanel(Svg::load(asset::plugin(pluginInstance, "res/Recorder.svg")));
+		setPanel(createPanel(asset::plugin(pluginInstance, "res/Recorder.svg"), asset::plugin(pluginInstance, "res/Recorder-dark.svg")));
 
-		addChild(createWidget<ScrewSilver>(Vec(RACK_GRID_WIDTH, 0)));
-		addChild(createWidget<ScrewSilver>(Vec(box.size.x - 2 * RACK_GRID_WIDTH, 0)));
-		addChild(createWidget<ScrewSilver>(Vec(RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
-		addChild(createWidget<ScrewSilver>(Vec(box.size.x - 2 * RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
+		addChild(createWidget<ThemedScrew>(Vec(RACK_GRID_WIDTH, 0)));
+		addChild(createWidget<ThemedScrew>(Vec(box.size.x - 2 * RACK_GRID_WIDTH, 0)));
+		addChild(createWidget<ThemedScrew>(Vec(RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
+		addChild(createWidget<ThemedScrew>(Vec(box.size.x - 2 * RACK_GRID_WIDTH, RACK_GRID_HEIGHT - RACK_GRID_WIDTH)));
 
-		addParam(createParamCentered<RoundBigBlackKnob>(mm2px(Vec(12.7, 21.417)), module, Recorder::GAIN_PARAM));
+		RecorderDisplay* display = createWidget<RecorderDisplay>(mm2px(Vec(0.0, 13.039)));
+		display->setSize(mm2px(Vec(25.4, 36.981)));
+		addChild(display);
 
-		RecButton* recButton = createWidgetCentered<RecButton>(mm2px(Vec(12.7, 73.624)));
-		recButton->module = module;
-		addChild(recButton);
+		addParam(createParamCentered<RoundLargeBlackKnob>(mm2px(Vec(13.144, 59.409)), module, Recorder::GAIN_PARAM));
+		addParam(createLightParamCentered<RecordButton>(mm2px(Vec(13.144, 81.459)), module, Recorder::REC_PARAM, Recorder::REC_LIGHT));
 
-		addInput(createInputCentered<PJ301MPort>(mm2px(Vec(6.697, 97.253)), module, Recorder::GATE_INPUT));
-		addInput(createInputCentered<PJ301MPort>(mm2px(Vec(18.703, 97.253)), module, Recorder::TRIG_INPUT));
-		addInput(createInputCentered<PJ301MPort>(mm2px(Vec(6.696, 112.253)), module, Recorder::LEFT_INPUT));
-		addInput(createInputCentered<PJ301MPort>(mm2px(Vec(18.703, 112.253)), module, Recorder::RIGHT_INPUT));
+		addInput(createInputCentered<ThemedPJ301MPort>(mm2px(Vec(7.562, 96.859)), module, Recorder::GATE_INPUT));
+		addInput(createInputCentered<ThemedPJ301MPort>(mm2px(Vec(18.4, 96.859)), module, Recorder::TRIG_INPUT));
+		addInput(createInputCentered<ThemedPJ301MPort>(mm2px(Vec(7.562, 113.115)), module, Recorder::LEFT_INPUT));
+		addInput(createInputCentered<ThemedPJ301MPort>(mm2px(Vec(18.4, 113.115)), module, Recorder::RIGHT_INPUT));
 
-		addChild(createLightCentered<MediumLight<RedLight>>(mm2px(Vec(6.7, 34.758)), module, Recorder::VU_LIGHTS + 0 * 6 + 0));
-		addChild(createLightCentered<MediumLight<RedLight>>(mm2px(Vec(18.7, 34.758)), module, Recorder::VU_LIGHTS + 1 * 6 + 0));
-		addChild(createLightCentered<MediumLight<YellowLight>>(mm2px(Vec(6.7, 39.884)), module, Recorder::VU_LIGHTS + 0 * 6 + 1));
-		addChild(createLightCentered<MediumLight<YellowLight>>(mm2px(Vec(18.7, 39.884)), module, Recorder::VU_LIGHTS + 1 * 6 + 1));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(6.7, 45.009)), module, Recorder::VU_LIGHTS + 0 * 6 + 2));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(18.7, 45.009)), module, Recorder::VU_LIGHTS + 1 * 6 + 2));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(6.7, 50.134)), module, Recorder::VU_LIGHTS + 0 * 6 + 3));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(18.7, 50.134)), module, Recorder::VU_LIGHTS + 1 * 6 + 3));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(6.7, 55.259)), module, Recorder::VU_LIGHTS + 0 * 6 + 4));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(18.7, 55.259)), module, Recorder::VU_LIGHTS + 1 * 6 + 4));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(6.7, 60.384)), module, Recorder::VU_LIGHTS + 0 * 6 + 5));
-		addChild(createLightCentered<MediumLight<GreenLight>>(mm2px(Vec(18.7, 60.384)), module, Recorder::VU_LIGHTS + 1 * 6 + 5));
-		addChild(createLightCentered<RecLight>(mm2px(Vec(12.699, 73.624)), module, Recorder::REC_LIGHT));
+		addChild(createLightCentered<SmallSimpleLight<RedLight>>(mm2px(Vec(6.676, 17.934)), module, Recorder::VU_LIGHTS + 0 * 6 + 0));
+		addChild(createLightCentered<SmallSimpleLight<RedLight>>(mm2px(Vec(18.695, 17.934)), module, Recorder::VU_LIGHTS + 1 * 6 + 0));
+		addChild(createLightCentered<SmallSimpleLight<YellowLight>>(mm2px(Vec(6.676, 23.232)), module, Recorder::VU_LIGHTS + 0 * 6 + 1));
+		addChild(createLightCentered<SmallSimpleLight<YellowLight>>(mm2px(Vec(18.695, 23.232)), module, Recorder::VU_LIGHTS + 1 * 6 + 1));
+		addChild(createLightCentered<SmallSimpleLight<GreenLight>>(mm2px(Vec(6.676, 28.529)), module, Recorder::VU_LIGHTS + 0 * 6 + 2));
+		addChild(createLightCentered<SmallSimpleLight<GreenLight>>(mm2px(Vec(18.695, 28.529)), module, Recorder::VU_LIGHTS + 1 * 6 + 2));
+		addChild(createLightCentered<SmallSimpleLight<GreenLight>>(mm2px(Vec(6.676, 33.827)), module, Recorder::VU_LIGHTS + 0 * 6 + 3));
+		addChild(createLightCentered<SmallSimpleLight<GreenLight>>(mm2px(Vec(18.695, 33.827)), module, Recorder::VU_LIGHTS + 1 * 6 + 3));
+		addChild(createLightCentered<SmallSimpleLight<GreenLight>>(mm2px(Vec(6.676, 39.124)), module, Recorder::VU_LIGHTS + 0 * 6 + 4));
+		addChild(createLightCentered<SmallSimpleLight<GreenLight>>(mm2px(Vec(18.695, 39.124)), module, Recorder::VU_LIGHTS + 1 * 6 + 4));
+		addChild(createLightCentered<SmallSimpleLight<GreenLight>>(mm2px(Vec(6.676, 44.422)), module, Recorder::VU_LIGHTS + 0 * 6 + 5));
+		addChild(createLightCentered<SmallSimpleLight<GreenLight>>(mm2px(Vec(18.695, 44.422)), module, Recorder::VU_LIGHTS + 1 * 6 + 5));
 
 		// Load cursor
 		stbi_set_unpremultiply_on_load(1);
