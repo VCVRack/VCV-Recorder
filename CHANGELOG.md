@@ -1,4 +1,8 @@
 
+### 2.0.2 (2023-09-05)
+- Redesign panel.
+- Add dark panel.
+
 ### 2.0.1 (2023-08-25)
 - Add 32 bit float WAV and AIFF encoding.
 
