@@ -994,7 +994,19 @@ struct Recorder : Module {
 	std::vector<int> getSampleRates() {
 		if (format == "opus")
 			return {48000};
-		return {44100, 48000};
+
+		int maxI = 4;
+		if (format == "flac")
+			maxI = 3;
+		if (format == "mp3" || format == "mpeg2")
+			maxI = 0;
+
+		std::vector<int> sampleRates;
+		for (int i = 0; i <= maxI; i++) {
+			sampleRates.push_back(44100 * (1 << i));
+			sampleRates.push_back(48000 * (1 << i));
+		}
+		return sampleRates;
 	}
 
 	void setDepth(int depth) {
