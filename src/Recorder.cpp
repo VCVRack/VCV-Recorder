@@ -984,6 +984,37 @@ struct Recorder : Module {
 		fixPathExtension();
 	}
 
+	void selectPathDialog(bool reselect) {
+		std::string dir;
+		std::string filename;
+		if (path != "") {
+			dir = system::getDirectory(path);
+			filename = system::getFilename(path);
+		}
+
+		// If dir exists and filename is valid, no need to reselect unless requested.
+		if (filename != "" && dir != "" && system::isDirectory(dir)) {
+			if (!reselect)
+				return;
+		}
+		else {
+			// Default dir to <Rack user dir>/recordings
+			dir = asset::user("recordings");
+			system::createDirectory(dir);
+		}
+
+		if (filename == "") {
+			filename = "Untitled";
+		}
+
+		// Open dialog
+		char* path = osdialog_file(OSDIALOG_SAVE, dir.c_str(), filename.c_str(), NULL);
+		if (path) {
+			setPath(path);
+			free(path);
+		}
+	}
+
 	void setSampleRate(int sampleRate) {
 		if (this->sampleRate == sampleRate)
 			return;
@@ -1097,36 +1128,15 @@ struct Recorder : Module {
 ////////////////////
 
 
-static void selectPath(Recorder *module) {
-	std::string dir;
-	std::string filename;
-	if (module->path != "") {
-		dir = system::getDirectory(module->path);
-		filename = system::getFilename(module->path);
-	}
-	else {
-		dir = asset::user("recordings");
-		system::createDirectory(dir);
-		filename = "Untitled";
-	}
-
-	char *path = osdialog_file(OSDIALOG_SAVE, dir.c_str(), filename.c_str(), NULL);
-	if (path) {
-		module->setPath(path);
-		free(path);
-	}
-}
-
-
 struct RecordButton : LightButton<VCVBezelBig, VCVBezelLightBig<RedLight>> {
 	// Instead of using onAction() which is called on mouse up, handle on mouse down
 	void onDragStart(const event::DragStart &e) override {
 		Recorder* module = dynamic_cast<Recorder*>(this->module);
 		if (e.button == GLFW_MOUSE_BUTTON_LEFT) {
-			if (module && module->path == "") {
-				selectPath(module);
+			if (module) {
+				module->selectPathDialog(false);
+				module->recClicked = true;
 			}
-			module->recClicked = true;
 		}
 
 		LightButton::onDragStart(e);
@@ -1247,7 +1257,7 @@ struct RecorderWidget : ModuleWidget {
 
 		std::string path = string::ellipsizePrefix(module->path, 30);
 		menu->addChild(createMenuItem((path != "") ? path : "Select...", "",
-			[=]() {selectPath(module);}
+			[=]() {module->selectPathDialog(true);}
 		));
 
 		menu->addChild(createBoolPtrMenuItem("Append -001, -002, etc.", "", &module->incrementPath));
