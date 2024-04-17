@@ -1,4 +1,8 @@
 
+### 2.0.3 (2024-04-16)
+- Allow samples rates up to 768 kHz or highest supported by format.
+- If last-saved folder doesn't exist when record button is clicked, launch save dialog.
+
 ### 2.0.2 (2023-09-05)
 - Redesign panel.
 - Add dark panel.
