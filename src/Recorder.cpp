@@ -91,7 +91,7 @@ struct Encoder {
 	AVFormatContext *formatCtx = NULL;
 	AVIOContext *io = NULL;
 
-	AVCodec *audioCodec = NULL;
+	const AVCodec *audioCodec = NULL;
 	AVCodecContext *audioCtx = NULL;
 	AVStream *audioStream = NULL;
 	AVFrame *audioFrames[AUDIO_FRAME_BUFFER_LEN] = {};
@@ -102,7 +102,7 @@ struct Encoder {
 	int64_t audioFrameIndex = 0;
 	int64_t workerAudioFrameIndex = 0;
 
-	AVCodec *videoCodec = NULL;
+	const AVCodec *videoCodec = NULL;
 	AVCodecContext *videoCtx = NULL;
 	AVStream *videoStream = NULL;
 	AVFrame *videoFrame = NULL;
@@ -200,17 +200,7 @@ struct Encoder {
 		}
 
 		// Set audio channels
-		audioCtx->channels = channels;
-		if (channels == 1) {
-			audioCtx->channel_layout = AV_CH_LAYOUT_MONO;
-		}
-		else if (channels == 2) {
-			audioCtx->channel_layout = AV_CH_LAYOUT_STEREO;
-		}
-		else {
-			WARN("Could not get channel layout for %d channels", channels);
-			return;
-		}
+		av_channel_layout_default(&audioCtx->ch_layout, channels);
 
 		// Set audio sample format
 		if (format == "wav" || format == "aiff" || format == "flac") {
@@ -290,7 +280,7 @@ struct Encoder {
 
 			audioFrames[i]->pts = 0;
 			audioFrames[i]->format = audioCtx->sample_fmt;
-			audioFrames[i]->channel_layout = audioCtx->channel_layout;
+			audioFrames[i]->ch_layout = audioCtx->ch_layout;
 			audioFrames[i]->sample_rate = audioCtx->sample_rate;
 			audioFrames[i]->nb_samples = audioCtx->frame_size;
 			// PCM doesn't set nb_samples, so use a sane default.
@@ -504,39 +494,40 @@ struct Encoder {
 		AVFrame* audioFrame = audioFrames[audioFrameIndex % AUDIO_FRAME_BUFFER_LEN];
 
 		// Set output
+		int channels = audioCtx->ch_layout.nb_channels;
 		if (audioCtx->sample_fmt == AV_SAMPLE_FMT_FLTP) {
 			float** output = (float**) audioFrame->data;
-			for (int c = 0; c < audioCtx->channels; c++) {
+			for (int c = 0; c < channels; c++) {
 				output[c][audioFrameSampleIndex] = input[c];
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_FLT) {
 			float** output = (float**) audioFrame->data;
-			for (int c = 0; c < audioCtx->channels; c++) {
-				output[0][audioFrameSampleIndex * audioCtx->channels + c] = input[c];
+			for (int c = 0; c < channels; c++) {
+				output[0][audioFrameSampleIndex * channels + c] = input[c];
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S16) {
 			int16_t** output = (int16_t**) audioFrame->data;
-			for (int c = 0; c < audioCtx->channels; c++) {
-				output[0][audioFrameSampleIndex * audioCtx->channels + c] = dsp::convert<int16_t>(clamp(input[c], -1.f, 1.f));
+			for (int c = 0; c < channels; c++) {
+				output[0][audioFrameSampleIndex * channels + c] = dsp::convert<int16_t>(clamp(input[c], -1.f, 1.f));
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S32) {
 			int32_t** output = (int32_t**) audioFrame->data;
-			for (int c = 0; c < audioCtx->channels; c++) {
-				output[0][audioFrameSampleIndex * audioCtx->channels + c] = dsp::convert<int32_t>(clamp(input[c], -1.f, 1.f));
+			for (int c = 0; c < channels; c++) {
+				output[0][audioFrameSampleIndex * channels + c] = dsp::convert<int32_t>(clamp(input[c], -1.f, 1.f));
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S16P) {
 			int16_t** output = (int16_t**) audioFrame->data;
-			for (int c = 0; c < audioCtx->channels; c++) {
+			for (int c = 0; c < channels; c++) {
 				output[c][audioFrameSampleIndex] = dsp::convert<int16_t>(clamp(input[c], -1.f, 1.f));
 			}
 		}
 		else if (audioCtx->sample_fmt == AV_SAMPLE_FMT_S32P) {
 			int32_t** output = (int32_t**) audioFrame->data;
-			for (int c = 0; c < audioCtx->channels; c++) {
+			for (int c = 0; c < channels; c++) {
 				output[c][audioFrameSampleIndex] = dsp::convert<int32_t>(clamp(input[c], -1.f, 1.f));
 			}
 		}
@@ -619,11 +610,11 @@ struct Encoder {
 			return;
 		}
 
-		while (1) {
-			AVPacket pkt = {};
-			av_init_packet(&pkt);
+		AVPacket* pkt = av_packet_alloc();
+		DEFER({av_packet_free(&pkt);});
 
-			err = avcodec_receive_packet(ctx, &pkt);
+		while (1) {
+			err = avcodec_receive_packet(ctx, pkt);
 			if (err == AVERROR(EAGAIN) || err == AVERROR_EOF)
 				break;
 			if (err < 0) {
@@ -631,10 +622,10 @@ struct Encoder {
 				return;
 			}
 
-			pkt.stream_index = stream->index;
-			av_packet_rescale_ts(&pkt, ctx->time_base, stream->time_base);
+			pkt->stream_index = stream->index;
+			av_packet_rescale_ts(pkt, ctx->time_base, stream->time_base);
 
-			err = av_interleaved_write_frame(formatCtx, &pkt);
+			err = av_interleaved_write_frame(formatCtx, pkt);
 			if (err < 0) {
 				WARN("Failed to write video frame: %s", err2str(err));
 				return;
