@@ -82,11 +82,11 @@ $(lame):
 
 # libopus
 $(libopus):
-	$(WGET) -nc "https://archive.mozilla.org/pub/opus/opus-1.3.1.tar.gz"
-	$(SHA256) opus-1.3.1.tar.gz 65b58e1e25b2a114157014736a3d9dfeaad8d41be1c8179866f144a2fb44ff9d
-	cd dep && $(UNTAR) ../opus-1.3.1.tar.gz
-	cd dep/opus-1.3.1 && $(CONFIGURE)
-	cd dep/opus-1.3.1 && $(MAKE) install
+	$(WGET) -nc "https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz"
+	$(SHA256) opus-1.5.2.tar.gz 65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1
+	cd dep && $(UNTAR) ../opus-1.5.2.tar.gz
+	cd dep/opus-1.5.2 && $(CONFIGURE)
+	cd dep/opus-1.5.2 && $(MAKE) install
 
 
 include $(RACK_DIR)/plugin.mk
