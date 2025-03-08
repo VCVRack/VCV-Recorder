@@ -939,13 +939,16 @@ struct Recorder : Module {
 		return !!encoder->getProducerVideoData();
 	}
 
-	void fixPathExtension() {
+	void refreshPathExtension() {
 		if (basename == "") {
 			path = "";
 			return;
 		}
-		std::string extension = FORMAT_INFO.at(format).extension;
-		path = directory + "/" + basename + "." + extension;
+		std::string filename = basename;
+		const auto& it = FORMAT_INFO.find(format);
+		if (it != FORMAT_INFO.end())
+			filename += "." + it->second.extension;
+		path = system::join(directory, filename);
 	}
 
 	// Settings
@@ -955,7 +958,7 @@ struct Recorder : Module {
 			return;
 		stop();
 		this->format = format;
-		fixPathExtension();
+		refreshPathExtension();
 	}
 
 	void setPath(std::string path) {
@@ -963,47 +966,55 @@ struct Recorder : Module {
 			return;
 		stop();
 
-		if (path == "") {
-			this->path = "";
-			directory = "";
-			basename = "";
+		this->path = "";
+		directory = "";
+		basename = "";
+		if (path != "") {
+			directory = system::getDirectory(path);
+			basename = system::getStem(path);
+			refreshPathExtension();
+		}
+	}
+
+	void selectPathDialog(bool ignoreIfDirExists = false) {
+		std::string dir;
+		std::string filename;
+		if (this->path != "") {
+			dir = system::getDirectory(this->path);
+			filename = system::getFilename(this->path);
+		}
+
+		// If allowed, skip dialog if dir exists and filename is set
+		if (ignoreIfDirExists && filename != "" && dir != "" && system::isDirectory(dir)) {
 			return;
 		}
 
-		directory = system::getDirectory(path);
-		basename = system::getStem(path);
-		fixPathExtension();
-	}
+		// Use fallback lastRecordingsDirectory
+		if (dir == "" || !system::isDirectory(dir)) {
+			dir = lastRecordingsDirectory;
 
-	void selectPathDialog(bool reselect) {
-		std::string dir;
-		std::string filename;
-		if (path != "") {
-			dir = system::getDirectory(path);
-			filename = system::getFilename(path);
+			// Use fallback <Rack user dir>/recordings
+			if (dir == "" || !system::isDirectory(dir)) {
+				dir = asset::user("recordings");
+				system::createDirectory(dir);
+			}
 		}
 
-		// If dir exists and filename is valid, no need to reselect unless requested.
-		if (filename != "" && dir != "" && system::isDirectory(dir)) {
-			if (!reselect)
-				return;
-		}
-		else {
-			// Default dir to <Rack user dir>/recordings
-			dir = asset::user("recordings");
-			system::createDirectory(dir);
-		}
-
+		// Use fallback filename
 		if (filename == "") {
 			filename = "Untitled";
 		}
 
 		// Open dialog
-		char* path = osdialog_file(OSDIALOG_SAVE, dir.c_str(), filename.c_str(), NULL);
-		if (path) {
-			setPath(path);
-			free(path);
+		char* pathC = osdialog_file(OSDIALOG_SAVE, dir.c_str(), filename.c_str(), NULL);
+		if (!pathC) {
+			return;
 		}
+		std::string path = pathC;
+		std::free(pathC);
+
+		setPath(path);
+		lastRecordingsDirectory = system::getDirectory(path);
 	}
 
 	void setSampleRate(int sampleRate) {
@@ -1125,7 +1136,7 @@ struct RecordButton : LightButton<VCVBezelBig, VCVBezelLightBig<RedLight>> {
 		Recorder* module = dynamic_cast<Recorder*>(this->module);
 		if (e.button == GLFW_MOUSE_BUTTON_LEFT) {
 			if (module) {
-				module->selectPathDialog(false);
+				module->selectPathDialog(true);
 				module->recClicked = true;
 			}
 		}
@@ -1248,7 +1259,7 @@ struct RecorderWidget : ModuleWidget {
 
 		std::string path = string::ellipsizePrefix(module->path, 30);
 		menu->addChild(createMenuItem((path != "") ? path : "Select...", "",
-			[=]() {module->selectPathDialog(true);}
+			[=]() {module->selectPathDialog();}
 		));
 
 		menu->addChild(createBoolPtrMenuItem("Append -001, -002, etc.", "", &module->incrementPath));

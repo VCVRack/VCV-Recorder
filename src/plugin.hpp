@@ -7,6 +7,8 @@ extern Plugin *pluginInstance;
 
 extern Model *modelRecorder;
 
+extern std::string lastRecordingsDirectory;
+
 
 /** From VCV Free */
 struct VCVBezelBig : app::SvgSwitch {
